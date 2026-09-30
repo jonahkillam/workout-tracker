@@ -14,6 +14,8 @@ import { effortFor, type EffortKind } from '../../recordings/derived'
 import { DetailChart, type Segment } from '../charts/DetailChart'
 import { ZoneLegend } from '../charts/TimelineBar'
 import { StatsRow } from '../entry/StatsRow'
+import { NoteLines } from './NoteLines'
+import { useEnsureStreams } from '../../sync/useStreams'
 
 interface Props {
   workout: Workout
@@ -32,6 +34,7 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
   useEffect(() => dialog.current?.focus(), [])
 
   const recording = useLiveQuery(() => (w.recording ? db.recordings.get(w.recording.id) : undefined), [w.recording?.id])
+  useEnsureStreams(w.recording ? [w.recording.id] : [])
   const streams = useLiveQuery(async () => {
     const s = w.recording ? await db.recordingStreams.get(w.recording.id) : undefined
     return s?.t.length ? s : null
@@ -151,7 +154,7 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
           zoneOf={(s) => stepStats(s, w.sport, profile, w.rpe).zone}
         />
 
-        {w.notes && <p className="notes-view">{w.notes}</p>}
+        {w.notes?.length ? <NoteLines notes={w.notes} /> : null}
 
         <footer className="modal-actions">
           <span className="spacer" />

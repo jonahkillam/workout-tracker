@@ -2,7 +2,12 @@ import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { db, saveWorkout } from '../db/db'
 import { parseWorkout } from '../parser/parser'
+import { forgetStravaToken } from './auth'
 import { syncWeek } from './sync'
+
+vi.mock('../supabase', () => ({
+  supabase: { auth: { getSession: async () => ({ data: { session: { access_token: 'jwt' } } }) } },
+}))
 
 const WEEK = '2026-09-28'
 const NOW = new Date(2026, 8, 30, 12).getTime()
@@ -30,12 +35,11 @@ beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(NOW)
   await Promise.all(db.tables.map((t) => t.clear()))
-  await db.stravaAuth.put({
-    id: 'strava', athleteId: 1, athleteName: 'Test', accessToken: 'tok', refreshToken: 'ref',
-    expiresAt: NOW / 1000 + 3600, scope: 'read,activity:read_all',
-  })
+  await db.stravaConnection.put({ id: 'strava', athleteId: 1, athleteName: 'Test', scope: 'read,activity:read_all' })
+  forgetStravaToken()
   calls = []
   routes = {
+    '/api/strava/token': () => json({ access_token: 'tok', expires_at: NOW / 1000 + 3600 }),
     '/athlete/activities': () => json([
       activity(1, '2026-09-29T07:00', 'Run', 3000, { trainer: true }),
       activity(2, '2026-09-30T18:00', 'StairStepper', 1800),
@@ -67,9 +71,9 @@ describe('syncWeek', () => {
     expect(result).toEqual({ status: 'synced', activities: 2, linked: 1 })
 
     const recs = await db.recordings.orderBy('startTime').toArray()
-    expect(recs.map((r) => [r.stravaId, r.sport, r.localDate])).toEqual([
-      [1, 'treadmill', '2026-09-29'],
-      [2, 'stair', '2026-09-30'],
+    expect(recs.map((r) => [r.id, r.stravaId, r.sport, r.localDate])).toEqual([
+      ['strava-1', 1, 'treadmill', '2026-09-29'],
+      ['strava-2', 2, 'stair', '2026-09-30'],
     ])
     expect(recs[0].laps).toEqual([{ start: 0, duration: 3000, distance: undefined }])
     expect((await db.recordingStreams.get(recs[0].id))?.hr).toEqual(Uint8Array.from([140, 141, 142]))
@@ -100,12 +104,27 @@ describe('syncWeek', () => {
     expect(await db.recordings.where('stravaId').equals(2).count()).toBe(0)
   })
 
-  it('refreshes an expired token before calling the API', async () => {
-    await db.stravaAuth.update('strava', { expiresAt: NOW / 1000 - 10 })
-    routes['/api/strava/refresh'] = () => json({ access_token: 'new', refresh_token: 'ref2', expires_at: NOW / 1000 + 21600 })
-    await syncWeek(WEEK, { now: NOW })
-    expect(calls[0]).toBe('/api/strava/refresh')
-    expect(await db.stravaAuth.get('strava')).toMatchObject({ accessToken: 'new', refreshToken: 'ref2' })
+  it('gets an access token from the server once, and asks again when it is about to expire', async () => {
+    const auth: string[] = []
+    routes['/athlete/activities'] = (_url, init) => {
+      auth.push(new Headers(init?.headers).get('authorization') ?? '')
+      return json([])
+    }
+    await syncWeek(WEEK, { now: NOW, force: true })
+    await syncWeek(WEEK, { now: NOW, force: true })
+    expect(calls.filter((c) => c === '/api/strava/token')).toHaveLength(1)
+    expect(auth).toEqual(['Bearer tok', 'Bearer tok'])
+
+    routes['/api/strava/token'] = () => json({ access_token: 'tok2', expires_at: NOW / 1000 + 7200 })
+    vi.setSystemTime(NOW + 3600_000)
+    await syncWeek(WEEK, { now: NOW, force: true })
+    expect(auth.at(-1)).toBe('Bearer tok2')
+  })
+
+  it('shows Strava as disconnected when the server no longer has access', async () => {
+    routes['/api/strava/token'] = () => json({ error: 'Strava access was revoked; connect again' }, 410)
+    await expect(syncWeek(WEEK, { now: NOW })).rejects.toThrow('Strava is not connected')
+    expect(await db.stravaConnection.get('strava')).toBeUndefined()
   })
 
   it('stops on the rate limit without marking the week as fetched', async () => {
@@ -116,7 +135,7 @@ describe('syncWeek', () => {
   })
 
   it('does nothing when not connected', async () => {
-    await db.stravaAuth.clear()
+    await db.stravaConnection.clear()
     expect((await syncWeek(WEEK, { now: NOW })).status).toBe('not-connected')
     expect(calls).toEqual([])
   })

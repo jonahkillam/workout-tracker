@@ -31,8 +31,12 @@ async function fetchDetails(recordings: Recording[]) {
     for (let r = queue.shift(); r; r = queue.shift()) {
       const [streams, laps] = await Promise.all([getStreams(r.stravaId!), getLaps(r.stravaId!)])
       const rows = streamsFromStrava(r.id, streams)
-      await db.transaction('rw', db.recordings, db.recordingStreams, async () => {
-        if (rows) await db.recordingStreams.put(rows)
+      await db.transaction('rw', db.recordings, db.recordingStreams, db.streamUploads, async () => {
+        if (rows) {
+          await db.recordingStreams.put(rows)
+          // Other devices get them from Storage rather than Strava's rate-limited API.
+          await db.streamUploads.put({ recordingId: r.id, queuedAt: Date.now() })
+        }
         // Marked even without streams, so manual activities aren't refetched every time.
         await db.recordings.update(r.id, { streamsFrom: 'strava', laps: lapsFromStrava(laps, rows?.t), updatedAt: Date.now() })
       })
@@ -65,7 +69,7 @@ async function linkWeek(days: string[]): Promise<number> {
  * was fetched recently, unless `force` is set.
  */
 export async function syncWeek(weekStart: string, { force = false, now = Date.now() } = {}): Promise<SyncResult> {
-  if (!(await db.stravaAuth.get('strava'))) return { status: 'not-connected', activities: 0, linked: 0 }
+  if (!(await db.stravaConnection.get('strava'))) return { status: 'not-connected', activities: 0, linked: 0 }
   // Strava rejects a future `after` bound, and there's nothing to fetch anyway.
   if (weekStart > toISO(new Date(now))) return { status: 'future', activities: 0, linked: 0 }
   const days = weekDays(weekStart)

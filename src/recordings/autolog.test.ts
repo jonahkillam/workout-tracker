@@ -68,6 +68,7 @@ describe('autoLogRecordings', () => {
 
     const run = await db.workouts.where('recording.id').equals('a').first()
     expect(run).toMatchObject({
+      id: 'auto-a',
       date: '2026-09-29',
       sport: 'run',
       title: 'Morning Run',

@@ -68,13 +68,31 @@ export interface Repeat {
 
 export type Block = Step | Repeat
 
+export type NoteKind = 'general' | 'fuel' | 'injury' | 'wellness' | 'gear'
+
+export const NOTE_KINDS: NoteKind[] = ['general', 'fuel', 'injury', 'wellness', 'gear']
+
+export const NOTE_LABEL: Record<NoteKind, string> = {
+  general: 'Note',
+  fuel: 'Fueling',
+  injury: 'Injury',
+  wellness: 'Sleep/wellness',
+  gear: 'Gear',
+}
+
+/** A note on a workout. `text` is always kept; kinds may later add optional structured fields. */
+export interface Note {
+  kind: NoteKind
+  text: string
+}
+
 export interface Workout {
   id: string
   /** ISO date, YYYY-MM-DD. */
   date: string
   sport: Sport
   title?: string
-  notes?: string
+  notes?: Note[]
   /** Session RPE, 1-10. */
   rpe?: number
   /** Total duration override in seconds, for sessions without structure. */
@@ -192,14 +210,11 @@ export interface RecordingStreams {
   originalSize?: number
 }
 
-export interface StravaAuth {
+/** Who this account's Strava is connected as. The tokens stay on the server (`strava_tokens`). */
+export interface StravaConnection {
   id: 'strava'
   athleteId: number
   athleteName: string
-  accessToken: string
-  refreshToken: string
-  /** Epoch seconds. */
-  expiresAt: number
   scope: string
 }
 

@@ -8,11 +8,15 @@ import { autoLogRecordings, detectText } from './recordings/autolog'
 import { fillRecordedSummaries } from './recordings/recorded'
 import { handleCallback } from './strava/auth'
 import { useWeekSync } from './strava/useWeekSync'
+import { whenReady } from './sync/engine'
+import { useEnsureStreams } from './sync/useStreams'
+import { useSyncStatus } from './sync/useSyncStatus'
 import { WorkoutEditor, type Draft } from './ui/entry/WorkoutEditor'
 import { ActivityViewer } from './ui/view/ActivityViewer'
 import { SettingsDialog } from './ui/settings/SettingsDialog'
 import { GapCalculator } from './ui/tools/GapCalculator'
 import { WeekPanels } from './ui/week/WeekPanels'
+import { Logo } from './ui/Logo'
 import { WeekTable } from './ui/week/WeekTable'
 
 const TREND_WEEKS = 12
@@ -41,9 +45,14 @@ export default function App() {
     })
   }, [])
 
-  // Summarise and log recordings imported before those existed, or whose streams arrived late.
+  // Wait for the first pull after sign-in before anything that writes, so this device sees what others did
+  // (e.g. which recordings were already auto-logged) first.
+  const [ready, setReady] = useState(false)
   useEffect(() => {
     void (async () => {
+      await whenReady()
+      setReady(true)
+      // Summarise and log recordings imported before those existed, or whose streams arrived late.
       await fillRecordedSummaries(await db.recordings.toArray())
       await autoLogRecordings(await db.recordings.toArray())
     })()
@@ -69,7 +78,7 @@ export default function App() {
   // null once loaded with nothing saved; undefined while loading.
   const stored = useLiveQuery(async () => (await db.settings.get('settings')) ?? null, [])
   const settings = useMemo(() => ({ ...DEFAULT_SETTINGS, ...stored }), [stored])
-  const strava = useLiveQuery(async () => (await db.stravaAuth.get('strava')) ?? null, [])
+  const strava = useLiveQuery(async () => (await db.stravaConnection.get('strava')) ?? null, [])
 
   const trendFrom = addDays(start, -7 * (TREND_WEEKS - 1))
   const weekEnd = addDays(start, 6)
@@ -83,7 +92,8 @@ export default function App() {
   )
   const lastFetch = useLiveQuery(() => db.stravaWeekFetch.get(start), [start])
   const lastSport = useLiveQuery(() => db.workouts.orderBy('updatedAt').last(), [])?.sport
-  const sync = useWeekSync(start, !!strava)
+  const sync = useWeekSync(start, ready && !!strava)
+  const account = useSyncStatus()
 
   const weeks = summarizeWeeks(start, TREND_WEEKS, workouts ?? [], settings, recordings ?? [])
   const weekWorkouts = useMemo(() => (workouts ?? []).filter((w) => w.date >= start), [workouts, start])
@@ -95,6 +105,7 @@ export default function App() {
   const recordingIds = [
     ...new Set([...weekWorkouts.flatMap((w) => (w.recording ? [w.recording.id] : [])), ...weekRecordings.map((r) => r.id)]),
   ].sort()
+  useEnsureStreams(recordingIds)
   const streams = useLiveQuery(async () => {
     const rows = await db.recordingStreams.bulkGet(recordingIds)
     return new Map(rows.flatMap((s): [string, RecordingStreams][] => (s ? [[s.recordingId, s]] : [])))
@@ -118,6 +129,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="toolbar">
+        <Logo size={20} />
         <h1>
           Week {isoWeek(start)} <span className="range">{fmtWeekRange(start)}</span>
         </h1>
@@ -133,6 +145,15 @@ export default function App() {
           Today
         </button>
         <span className="spacer" />
+        <span className="sync-status meta" title={account.error}>
+          {account.syncing
+            ? 'Saving…'
+            : account.pending && account.error
+              ? `Offline, ${account.pending} unsaved`
+              : account.lastSyncedAt
+                ? `Saved ${ago(account.lastSyncedAt)}`
+                : ''}
+        </span>
         {strava && (
           <span className="sync-status">
             <span className="meta">

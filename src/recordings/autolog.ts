@@ -24,7 +24,8 @@ export function detectText(rec: Recording, streams: RecordingStreams | undefined
 function workoutFor(rec: Recording, detected: DetectedText, settings: Settings): Workout {
   const now = Date.now()
   return {
-    id: crypto.randomUUID(),
+    // One per recording, so devices auto-logging the same recording converge on one workout.
+    id: `auto-${rec.id}`,
     date: rec.localDate,
     sport: rec.sport,
     title: rec.name,

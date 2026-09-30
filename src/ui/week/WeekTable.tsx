@@ -10,6 +10,7 @@ import { linkOffset } from '../../recordings/align'
 import { effortFor, type Effort } from '../../recordings/derived'
 import { mainSetSummary } from '../../parser/summary'
 import { TimelineBar } from '../charts/TimelineBar'
+import { NoteLines } from '../view/NoteLines'
 
 interface Props {
   start: string
@@ -156,7 +157,7 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
               hr={recStreams ? { streams: recStreams, offset: linkOffset(w.recording) } : undefined}
               effort={efforts.get(w.id)}
             />
-            {w.notes && <div className="notes">{w.notes}</div>}
+            {w.notes?.length ? <NoteLines notes={w.notes} clamp /> : null}
           </td>
           <NumberCells t={{ ...t, hr: rec?.avgHr }} stair={w.sport === 'stair'} />
         </tr>,

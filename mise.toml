@@ -12,6 +12,26 @@ description = "Start the dev server"
 depends = ["install"]
 run = "npx vite"
 
+[tasks."dev:local"]
+description = "Start the dev server against the local Supabase stack"
+depends = ["install"]
+run = """
+eval "$(supabase status -o env | sed -nE 's/^API_URL=/export SUPABASE_URL=/p; s/^PUBLISHABLE_KEY=/export SUPABASE_PUBLISHABLE_KEY=/p; s/^SECRET_KEY=/export SUPABASE_SECRET_KEY=/p')"
+npx vite
+"""
+
+[tasks."db:start"]
+description = "Start the local Supabase stack (Docker); sign-in emails appear in Mailpit"
+run = "supabase start"
+
+[tasks."db:reset"]
+description = "Recreate the local database from supabase/migrations"
+run = "supabase db reset"
+
+[tasks."db:test"]
+description = "Run the database tests (pgTAP) against the local stack"
+run = "supabase test db"
+
 [tasks.test]
 description = "Run parser and metrics tests"
 depends = ["install"]

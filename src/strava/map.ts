@@ -53,7 +53,8 @@ export function recordingFromSummary(a: StravaActivity, existing?: Recording, no
   return {
     laps: [],
     ...existing,
-    id: existing?.id ?? crypto.randomUUID(),
+    // Derived from the Strava id so every device syncing the same activity writes the same row.
+    id: existing?.id ?? `strava-${a.id}`,
     stravaId: a.id,
     startTime: a.start_date,
     // start_date_local is local wall-clock time written with a Z suffix.

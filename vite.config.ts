@@ -34,7 +34,15 @@ function stravaTokenRoutes(env: StravaEnv): Plugin {
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  // The Vercel Supabase integration names its variables without a VITE_ prefix. Expose only the URL and the
+  // public key to the browser; widening envPrefix would also ship the service key.
+  const supabaseUrl = env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseKey = env.SUPABASE_PUBLISHABLE_KEY ?? env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   return {
     plugins: [react(), stravaTokenRoutes(env)],
+    define: {
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(supabaseUrl ?? ''),
+      'import.meta.env.VITE_SUPABASE_KEY': JSON.stringify(supabaseKey ?? ''),
+    },
   }
 })

@@ -1,10 +1,10 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useMemo, useState } from 'react'
-import { db, deleteWorkout, saveWorkout } from '../../db/db'
+import { db, deleteWorkout, normalizeNotes, saveWorkout } from '../../db/db'
 import { fmtLongDate } from '../../metrics/dates'
 import { needsThresholdPace, workoutTotals } from '../../metrics/workout'
 import { withSpeedUnit } from '../../model/tree'
-import type { Block, Profile, Recording, RecordingLink, Settings, SpeedUnit, Sport, Workout } from '../../model/types'
+import type { Block, Note, Profile, Recording, RecordingLink, Settings, SpeedUnit, Sport, Workout } from '../../model/types'
 import { PROFILE_KEYS, profileOf, SPORT_LABEL, SPORTS } from '../../model/types'
 import { fmtClock, fmtDuration, fmtPace, parsePaceInput } from '../../parser/format'
 import { parseWorkout } from '../../parser/parser'
@@ -13,9 +13,11 @@ import { detectText } from '../../recordings/autolog'
 import { canDetect } from '../../recordings/intervals'
 import { serializeBlocks } from '../../parser/serialize'
 import { TimelineBar } from '../charts/TimelineBar'
+import { NotesEditor } from './NotesEditor'
 import { ShorthandInput } from './ShorthandInput'
 import { StatsRow } from './StatsRow'
 import { StepTable } from './StepTable'
+import { useEnsureStreams } from '../../sync/useStreams'
 
 export type Draft = Partial<Workout> & { date: string; sport: Sport }
 
@@ -61,7 +63,7 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
   const [title, setTitle] = useState(draft.title ?? '')
   const [rpe, setRpe] = useState(draft.rpe !== undefined ? String(draft.rpe) : '')
   const [totalText, setTotalText] = useState(draft.duration ? fmtDuration(draft.duration) : '')
-  const [notes, setNotes] = useState(draft.notes ?? '')
+  const [notes, setNotes] = useState<Note[]>(draft.notes?.length ? draft.notes : [{ kind: 'general', text: '' }])
   const [text, setText] = useState(draft.rawText ?? '')
   const [speedUnit, setSpeedUnit] = useState<SpeedUnit>(draft.speedUnit ?? settings.speedUnit)
   // Thresholds are copied from settings when the workout is first logged, then kept.
@@ -80,6 +82,7 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
     const [rec, s] = await Promise.all([db.recordings.get(link.id), db.recordingStreams.get(link.id)])
     return rec ? { rec, streams: s } : null
   }, [link?.id])
+  useEnsureStreams(link ? [link.id] : [])
   const streams = recording?.streams?.hr && recording.streams.t.length ? recording.streams : undefined
   const offset = linkOffset(link)
   const hr = streams ? { streams, offset } : undefined
@@ -124,7 +127,7 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
       date,
       sport,
       title: title.trim() || undefined,
-      notes: notes.trim() || undefined,
+      notes: normalizeNotes(notes),
       rpe: rpeValue,
       duration,
       rawText: text.trim(),
@@ -295,10 +298,10 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
           )}
         </details>
 
-        <label className="field" style={{ marginTop: 12 }}>
+        <div className="field" style={{ marginTop: 12 }}>
           <span>Notes</span>
-          <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
-        </label>
+          <NotesEditor notes={notes} onChange={setNotes} />
+        </div>
 
         <footer className="modal-actions">
           {draft.id && (
