@@ -1,0 +1,47 @@
+[tools]
+node = "24"
+
+[tasks.install]
+description = "Install npm dependencies"
+run = "npm install"
+sources = ["package.json", "package-lock.json"]
+outputs = ["node_modules/.package-lock.json"]
+
+[tasks.dev]
+description = "Start the dev server"
+depends = ["install"]
+run = "npx vite"
+
+[tasks.test]
+description = "Run parser and metrics tests"
+depends = ["install"]
+run = "npx vitest run"
+
+[tasks."test:watch"]
+description = "Run tests in watch mode"
+depends = ["install"]
+run = "npx vitest"
+
+[tasks.typecheck]
+description = "Type-check the project"
+depends = ["install"]
+run = "npx tsc -b"
+
+[tasks.lint]
+description = "Lint with oxlint"
+depends = ["install"]
+run = "npx oxlint"
+
+[tasks.check]
+description = "Typecheck, lint and test"
+depends = ["typecheck", "lint", "test"]
+
+[tasks.build]
+description = "Production build into dist/"
+depends = ["install"]
+run = "npm run build"
+
+[tasks.preview]
+description = "Serve the production build"
+depends = ["build"]
+run = "npx vite preview"
