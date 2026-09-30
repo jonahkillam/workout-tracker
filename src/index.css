@@ -281,7 +281,8 @@ table.week tbody tr.day-start td {
   border-top: 1px solid var(--border);
 }
 
-table.week tbody tr.session:not(.day-start) td:not(.day) {
+table.week tbody tr.session:not(.day-start) td:not(.day),
+table.week tbody tr.unstructured:not(.day-start) td:not(.day) {
   border-top: 1px dashed var(--border);
 }
 
@@ -394,16 +395,6 @@ table.week .c-n {
 
 table.week .c-hr {
   width: 48px;
-}
-
-table.week tr.unlogged td:not(.day) {
-  color: var(--text-3);
-  background: repeating-linear-gradient(135deg, transparent 0 6px, var(--panel) 6px 12px);
-}
-
-table.week tr.unlogged .headline {
-  color: var(--text-2);
-  font-weight: 500;
 }
 
 table.week a {
@@ -546,6 +537,60 @@ table.week a:hover {
 .steps tr.current td {
   background: var(--panel);
   font-weight: 600;
+}
+
+/* GAP calculator */
+.calc .modal-head {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.calc-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.calc-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.calc-fields input {
+  width: 100%;
+}
+
+.calc-table td,
+.calc-table th {
+  padding: 3px 6px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.calc-table .num {
+  text-align: right;
+}
+
+@media (max-width: 700px) {
+  .modal-backdrop:has(.calc) {
+    padding: 8px;
+  }
+  .calc {
+    padding: 12px;
+  }
+  .calc .stats-row {
+    gap: 6px 16px;
+  }
+  .calc .stats-row .value {
+    font-size: 13px;
+  }
+  .calc-table td,
+  .calc-table th {
+    padding: 3px 4px;
+    font-size: 12px;
+  }
 }
 
 .modal-head {

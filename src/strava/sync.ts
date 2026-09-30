@@ -5,6 +5,7 @@ import { workoutTotals } from '../metrics/workout'
 import type { Recording } from '../model/types'
 import { autoLogRecordings } from '../recordings/autolog'
 import { autoLinks, findSameActivity } from '../recordings/match'
+import { fillRecordedSummaries } from '../recordings/recorded'
 import { getLaps, getStreams, listActivities, RateLimitedError } from './api'
 import { lapsFromStrava, recordingFromSummary, streamsFromStrava } from './map'
 
@@ -99,6 +100,7 @@ export async function syncWeek(weekStart: string, { force = false, now = Date.no
     })
 
     await fetchDetails(await db.recordings.where('localDate').anyOf(days).toArray())
+    await fillRecordedSummaries(await db.recordings.where('localDate').anyOf(days).toArray())
     const linked = await linkWeek(days)
     // After linking, so planned workouts take their recordings first.
     await autoLogRecordings(await db.recordings.where('localDate').anyOf(days).toArray())
@@ -107,6 +109,7 @@ export async function syncWeek(weekStart: string, { force = false, now = Date.no
   } catch (e) {
     if (e instanceof RateLimitedError) {
       // Link what we have; the week is retried on the next visit.
+      await fillRecordedSummaries(await db.recordings.where('localDate').anyOf(days).toArray())
       const linked = await linkWeek(days)
       await autoLogRecordings(await db.recordings.where('localDate').anyOf(days).toArray())
       return { status: 'rate-limited', activities: await db.recordings.where('localDate').anyOf(days).count(), linked }

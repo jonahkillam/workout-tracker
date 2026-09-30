@@ -1,10 +1,11 @@
 import { useMemo, type ReactNode } from 'react'
 import { fmtDay, today, weekDays } from '../../metrics/dates'
 import type { WeekSummary } from '../../metrics/week'
-import { workoutTotals, type Totals } from '../../metrics/workout'
-import type { Recording, RecordingStreams, Settings, Workout } from '../../model/types'
+import { recordedTotals, sessionTotals } from '../../metrics/recorded'
+import type { Totals } from '../../metrics/workout'
+import type { Recording, RecordingStreams, Settings, SpeedUnit, Workout } from '../../model/types'
 import { SPORT_LABEL, SPORTS } from '../../model/types'
-import { fmtHours, num } from '../../parser/format'
+import { fmtHours, fmtSpeedIn, num } from '../../parser/format'
 import { linkOffset } from '../../recordings/align'
 import { effortFor, type Effort } from '../../recordings/derived'
 import { mainSetSummary } from '../../parser/summary'
@@ -41,12 +42,26 @@ function NumberCells({ t, stair }: { t: Cells; stair?: boolean }) {
 
 const stravaUrl = (r: Recording) => (r.stravaId ? `https://www.strava.com/activities/${r.stravaId}` : undefined)
 
+/** Average pace, speed or power over the recording's moving time, for an unstructured activity's subline. */
+function recordedAverage(r: Recording, speedUnit: SpeedUnit): string | undefined {
+  const power = r.recorded?.power
+  if (power) {
+    const secs = power.secs.reduce((a, b) => a + b, 0)
+    const watts = power.secs.reduce((a, s, i) => a + (i + 0.5) * power.bin * s, 0)
+    if (secs) return `${Math.round(watts / secs)} W`
+  }
+  const moving = r.moving ?? r.recorded?.moving
+  if (r.sport === 'stair' || !r.distance || !moving) return undefined
+  const kmh = (r.distance / moving) * 3.6
+  return fmtSpeedIn(kmh, r.sport === 'run' ? 'pace' : r.sport === 'ride' ? 'kmh' : speedUnit)
+}
+
 export function WeekTable({ start, workouts, recordings, streams, summary, acwr, settings, onOpen, onAdd, onLogRecording }: Props) {
   const now = today()
   const byId = new Map(recordings.map((r) => [r.id, r]))
   const linked = new Set(workouts.map((w) => w.recording?.id).filter(Boolean))
   const rows: ReactNode[] = []
-  // GAP, pace or power per linked workout, for the timelines.
+  // GAP, pace or power per linked workout and unstructured activity, for the timelines.
   const efforts = useMemo(() => {
     const out = new Map<string, Effort>()
     for (const w of workouts) {
@@ -54,13 +69,19 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
       const e = s && effortFor(s, w.sport, w.blocks, w.profile ?? settings, w.rpe, linkOffset(w.recording))
       if (e) out.set(w.id, e)
     }
+    const linkedIds = new Set(workouts.map((w) => w.recording?.id))
+    for (const r of recordings) {
+      const s = !linkedIds.has(r.id) && streams.get(r.id)
+      const e = s && effortFor(s, r.sport, [], r.profile ?? settings, undefined, 0)
+      if (e) out.set(r.id, e)
+    }
     return out
-  }, [workouts, streams, settings])
+  }, [workouts, recordings, streams, settings])
 
   for (const date of weekDays(start)) {
     const sessions = workouts.filter((w) => w.date === date).sort((a, b) => a.createdAt - b.createdAt)
-    const unlogged = recordings.filter((r) => r.localDate === date && !linked.has(r.id))
-    const span = sessions.length + unlogged.length
+    const unstructured = recordings.filter((r) => r.localDate === date && !linked.has(r.id))
+    const span = sessions.length + unstructured.length
     const { weekday, day } = fmtDay(date)
     const dayCell = (
       <td rowSpan={Math.max(1, span)} className={`day${date === now ? ' today' : ''}`}>
@@ -92,8 +113,8 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
 
     sessions.forEach((w, i) => {
       const profile = w.profile ?? settings
-      const t = workoutTotals(w, profile)
       const rec = w.recording ? byId.get(w.recording.id) : undefined
+      const t = sessionTotals(w, rec, settings)
       const recStreams = w.recording && streams.get(w.recording.id)
       const mainSet = mainSetSummary(w.blocks, w.speedUnit ?? settings.speedUnit)
       const subline = [mainSet && w.title, w.rpe !== undefined && `RPE ${w.rpe}`].filter(Boolean) as string[]
@@ -142,19 +163,21 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
       )
     })
 
-    unlogged.forEach((r, i) => {
+    unstructured.forEach((r, i) => {
       const first = sessions.length === 0 && i === 0
       const url = stravaUrl(r)
+      const recStreams = streams.get(r.id)
+      const average = recordedAverage(r, settings.speedUnit)
       rows.push(
-        <tr key={r.id} className={`unlogged${first ? ' day-start' : ''}`}>
+        <tr key={r.id} className={`unstructured${first ? ' day-start' : ''}`}>
           {first && dayCell}
           <td className="sport wide-only">{SPORT_LABEL[r.sport]}</td>
           <td className="detail">
             <span className="headline">{r.name ?? r.rawSport}</span>
             <div className="subline">
-              Not logged ·{' '}
+              Unstructured{average && ` · ${average}`} ·{' '}
               <button className="link" onClick={() => onLogRecording(r)}>
-                Log it
+                Log as workout
               </button>
               {url && (
                 <>
@@ -165,11 +188,19 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
                 </>
               )}
             </div>
+            {recStreams && (
+              <TimelineBar
+                blocks={[]}
+                sport={r.sport}
+                profile={r.profile ?? settings}
+                height={30}
+                mini
+                hr={{ streams: recStreams, offset: 0 }}
+                effort={efforts.get(r.id)}
+              />
+            )}
           </td>
-          <NumberCells
-            t={{ duration: r.elapsed, distance: r.distance ?? 0, vertical: r.elevationGain ?? 0, load: 0, hr: r.avgHr }}
-            stair={r.sport === 'stair'}
-          />
+          <NumberCells t={{ ...recordedTotals(r, r.sport, r.profile ?? settings), hr: r.avgHr }} stair={r.sport === 'stair'} />
         </tr>,
       )
     })
@@ -187,7 +218,7 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
           <th className="num c-n">Time</th>
           <th className="num c-n wide-only">km</th>
           <th className="num c-n wide-only">Climb m</th>
-          <th className="num c-hr" title="Average heart rate from the linked recording">
+          <th className="num c-hr" title="Average heart rate from the recording">
             HR
           </th>
           <th className="num c-n">Load</th>

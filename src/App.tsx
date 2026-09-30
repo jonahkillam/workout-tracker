@@ -5,6 +5,7 @@ import { addDays, fmtWeekRange, isoWeek, today, weekStart } from './metrics/date
 import { acuteChronicRatio, summarizeWeeks } from './metrics/week'
 import { DEFAULT_SETTINGS, profileOf, type Recording, type RecordingStreams, type Workout } from './model/types'
 import { autoLogRecordings, detectText } from './recordings/autolog'
+import { fillRecordedSummaries } from './recordings/recorded'
 import { handleCallback } from './strava/auth'
 import { useWeekSync } from './strava/useWeekSync'
 import { WorkoutEditor, type Draft } from './ui/entry/WorkoutEditor'
@@ -40,9 +41,12 @@ export default function App() {
     })
   }, [])
 
-  // Log runs and rides imported before auto-logging existed, or whose streams arrived late.
+  // Summarise and log recordings imported before those existed, or whose streams arrived late.
   useEffect(() => {
-    void db.recordings.toArray().then(autoLogRecordings)
+    void (async () => {
+      await fillRecordedSummaries(await db.recordings.toArray())
+      await autoLogRecordings(await db.recordings.toArray())
+    })()
   }, [])
 
   // ← / → move between weeks, unless a dialog is open or a field has focus.
@@ -74,24 +78,27 @@ export default function App() {
     [trendFrom, weekEnd],
   )
   const recordings = useLiveQuery(
-    () => db.recordings.where('localDate').between(start, weekEnd, true, true).sortBy('startTime'),
-    [start, weekEnd],
+    () => db.recordings.where('localDate').between(trendFrom, weekEnd, true, true).sortBy('startTime'),
+    [trendFrom, weekEnd],
   )
   const lastFetch = useLiveQuery(() => db.stravaWeekFetch.get(start), [start])
   const lastSport = useLiveQuery(() => db.workouts.orderBy('updatedAt').last(), [])?.sport
   const sync = useWeekSync(start, !!strava)
 
-  const weeks = summarizeWeeks(start, TREND_WEEKS, workouts ?? [], settings)
+  const weeks = summarizeWeeks(start, TREND_WEEKS, workouts ?? [], settings, recordings ?? [])
   const weekWorkouts = useMemo(() => (workouts ?? []).filter((w) => w.date >= start), [workouts, start])
+  const weekRecordings = useMemo(() => (recordings ?? []).filter((r) => r.localDate >= start), [recordings, start])
   const isThisWeek = start === weekStart(today())
   const isFuture = start > weekStart(today())
   const viewing = viewingId ? workouts?.find((w) => w.id === viewingId) : undefined
-  // HR samples for this week's linked recordings, for the timelines.
-  const linkedIds = weekWorkouts.flatMap((w) => (w.recording ? [w.recording.id] : [])).sort()
+  // Per-sample data for this week's recordings, for the timelines.
+  const recordingIds = [
+    ...new Set([...weekWorkouts.flatMap((w) => (w.recording ? [w.recording.id] : [])), ...weekRecordings.map((r) => r.id)]),
+  ].sort()
   const streams = useLiveQuery(async () => {
-    const rows = await db.recordingStreams.bulkGet(linkedIds)
+    const rows = await db.recordingStreams.bulkGet(recordingIds)
     return new Map(rows.flatMap((s): [string, RecordingStreams][] => (s ? [[s.recordingId, s]] : [])))
-  }, [linkedIds.join()])
+  }, [recordingIds.join()])
 
   const addOn = (date: string) => setEditing({ date, sport: lastSport ?? 'run' })
   const open = (w: Workout) => setViewingId(w.id)
@@ -101,7 +108,9 @@ export default function App() {
       date: r.localDate,
       sport: r.sport,
       title: r.name,
-      ...(detected ? { ...detected, generated: true, speedUnit: r.sport === 'run' ? 'pace' : undefined } : { duration: r.elapsed }),
+      ...(detected
+        ? { rawText: detected.rawText, blocks: detected.blocks, generated: true, speedUnit: r.sport === 'run' ? 'pace' : undefined }
+        : { duration: r.moving ?? r.elapsed }),
       recording: { id: r.id, linkedBy: 'manual', alignment: { method: 'offset', offset: 0 } },
     })
   }
@@ -165,7 +174,7 @@ export default function App() {
       <WeekTable
         start={start}
         workouts={weekWorkouts}
-        recordings={recordings ?? []}
+        recordings={weekRecordings}
         streams={streams ?? new Map()}
         summary={weeks[weeks.length - 1]}
         acwr={acuteChronicRatio(weeks)}
@@ -185,7 +194,7 @@ export default function App() {
         />
       )}
       {editing && <WorkoutEditor draft={editing} settings={settings} onClose={() => setEditing(null)} />}
-      {showGap && <GapCalculator speedUnit={settings.speedUnit} onClose={() => setShowGap(false)} />}
+      {showGap && <GapCalculator settings={settings} onClose={() => setShowGap(false)} />}
       {showSettings && <SettingsDialog settings={settings} onClose={() => setShowSettings(false)} />}
     </div>
   )

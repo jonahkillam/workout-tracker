@@ -89,7 +89,7 @@ export function SettingsDialog({ settings, onClose }: Props) {
             <span>Stair step height (m)</span>
             <input
               type="number"
-              step={0.01}
+              step="any"
               value={s.stairStepHeight}
               onChange={(e) => setS({ ...s, stairStepHeight: Number(e.target.value) })}
             />
@@ -201,7 +201,7 @@ function ReprocessRow() {
     setBusy(true)
     try {
       const r = await reprocessAll()
-      setResult(`Updated ${r.updated}, created ${r.created}.`)
+      setResult(`Updated ${r.updated}, created ${r.created}, removed ${r.removed} (now unstructured).`)
     } catch (e) {
       setResult(`Failed: ${(e as Error).message}`)
     } finally {

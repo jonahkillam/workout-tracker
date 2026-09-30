@@ -142,8 +142,37 @@ export interface Recording {
   laps: Lap[]
   /** When a workout was generated from this recording. Set once, so a deleted one isn't recreated. */
   autoLogged?: number
+  /** When detection found no clear workout structure, so it's left as an unstructured activity. */
+  unstructured?: number
+  /** Totals and time-in-intensity worked out from the streams, once they've arrived. */
+  recorded?: RecordedSummary
+  /** Thresholds in effect when the summary was worked out, for zoning it without a workout. */
+  profile?: Profile
   importedAt: number
   updatedAt: number
+}
+
+/** Moving seconds per bin: `secs[i]` is time spent from `i × bin` up to `(i + 1) × bin`. */
+export interface Histogram {
+  bin: number
+  secs: number[]
+}
+
+/**
+ * What a recording's streams add up to. Time in intensity is kept as histograms
+ * rather than zones, so it can be zoned by whichever thresholds apply.
+ */
+export interface RecordedSummary {
+  /** Seconds moving, not counting stops. */
+  moving: number
+  /** Metres. */
+  distance: number
+  /** Grade-adjusted speed (Minetti 2002), km/h. Outdoor runs only. */
+  gap?: Histogram
+  /** 30 s rolling power, W. Rides only. */
+  power?: Histogram
+  /** Heart rate, bpm. */
+  hr?: Histogram
 }
 
 /** Per-sample data for a recording, kept apart because it's large. */
@@ -224,7 +253,8 @@ export function profileOf(s: Profile): Profile {
 
 /** Only equipment constants have defaults; thresholds must come from the athlete. */
 export const DEFAULT_SETTINGS: Settings = {
-  stairStepHeight: 0.2,
+  // 16 steps per 3.25 m floor.
+  stairStepHeight: 3.25 / 16,
   stairFloorHeight: 3.25,
   speedUnit: 'kmh',
 }

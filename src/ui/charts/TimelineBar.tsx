@@ -30,7 +30,8 @@ interface Props {
  * zone, so work and recovery read apart at a glance. Incline, when present,
  * gets its own thin track underneath rather than sharing the zone axis.
  * Recorded HR, when given, is a red line on its own min–max scale over the
- * zones, and GAP, pace or power a grey line on a zero-based scale.
+ * zones, and GAP, pace or power a grey line on a zero-based scale. With no
+ * timed steps but a recording (an unstructured activity), only the lines show.
  */
 export function TimelineBar({
   blocks,
@@ -49,13 +50,13 @@ export function TimelineBar({
     .map((step) => ({ step, stats: stepStats(step, sport, profile, rpe) }))
     .filter((s) => s.stats.duration)
   const total = segments.reduce((sum, s) => sum + s.stats.duration!, 0)
-  if (!total) return mini ? null : <div className="empty">No timed steps yet.</div>
+  // If the recording ran past the plan, widen the axis so its tail still shows. With no plan, it's just the recording.
+  const recording = hr
+  const lastT = recording?.streams.t.length ? recording.streams.t[recording.streams.t.length - 1] - recording.offset : 0
+  const domain = Math.max(total, lastT)
+  if (!domain) return mini ? null : <div className="empty">No timed steps yet.</div>
 
   const width = 1000
-  // If the recording ran past the plan, widen the axis so its tail still shows.
-  const recording = hr
-  const lastT = recording ? recording.streams.t[recording.streams.t.length - 1] - recording.offset : 0
-  const domain = Math.max(total, lastT)
   // Many short segments: drop the gap so thin ones don't vanish.
   const gap = segments.length > 80 ? 0 : 2
   const offsets: number[] = []

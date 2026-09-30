@@ -46,9 +46,12 @@ When written once, incline and machine level apply to work and rest. Intensity t
 
 ## Strava
 
-When connected, the app pulls each week's Strava activities as you view it. It stores them as recordings (summary, laps and streams, including heart rate) and links each one to the workout it clearly matches: same day, compatible sport, closest duration. Activities with no workout show as faded "Log it" rows. You can link or unlink a recording from a workout's form.
+When connected, the app pulls each week's Strava activities as you view it. It stores them as recordings (summary, laps and streams, including heart rate) and links each one to the workout it clearly matches: same day, compatible sport, closest duration. Activities with no workout show as unstructured activities, with recorded HR, pace or power, and a "Log as workout" link. You can link or unlink a recording from a workout's form.
 
-Outdoor runs and rides with no workout are logged automatically, with the structure detected from the recording: warm-up, reps, recoveries and cool-down.
+**Totals from recordings.** Weekly totals for runs with recorded pace and rides with recorded power come from the recording, not the parsed steps. Unstructured activities count too. That covers moving time, distance, climb, time in zones and load. Recorded zones use grade-adjusted pace (Minetti 2002) against threshold pace for runs, or 30 s power against FTP for rides. Without that threshold they use HR against threshold HR, and without either, the planned zones (Z2 if there's no plan). A workout's own form still shows the plan's totals.
+
+Outdoor runs and rides with no workout are logged automatically when they clearly look like a workout, with the structure detected from the recording: warm-up, reps, recoveries and cool-down.
+- **What looks like a workout:** at least two separate efforts, clearly harder than the rest of the moving time. Reps split only by standing still (lights, a gate) count as one broken effort, unless they're regular (same distance or time, even recoveries), as on a track. A steady run, a single surge or fast finish, or a tempo broken up by stops stays an unstructured activity.
 - **How reps are found:** deliberate laps are used when present. Otherwise changes in grade-adjusted pace (runs) or power (rides; speed is never used) are found in the stream and snapped to a nearby lap. Grade-adjusted pace keeps a slow climb from reading as recovery.
 - **What counts as work:** work starts at Z3 of your threshold pace or FTP, or at a clear two-level split when those aren't set. It must also be clearly harder than the stretches either side (15% for runs, 25% for rides); otherwise the whole activity is steady.
 - **Warm-up and cool-down:** only the first stretch can be a warm-up and only the last a cool-down, and only when clearly easier than the stretch beside it. Anything else outside the reps is steady.
@@ -56,7 +59,7 @@ Outdoor runs and rides with no workout are logged automatically, with the struct
 - **Pauses:** stops of a minute or more, whether the timer was paused or you stood still, become `pause` steps, so the plan stays lined up with the recording. In a recovery, standing still is part of the rest unless it's longer than 5 minutes.
 - **Grouping:** reps within 10 s of each other are grouped into a repeat, with a pace or power range, e.g. `10m wu @ 5:33/km, 6x800mtr/90s -r @ 3:18-3:22/km, 10m cd`.
 - **Deleting:** a generated workout you delete stays deleted.
-- **Re-detecting:** use "Detect intervals" in a workout's form, or Settings → **Reprocess logged activities** to re-run detection on every generated workout you haven't edited.
+- **Re-detecting:** use "Detect intervals" in a workout's form, or Settings → **Reprocess logged activities** to re-run detection on every generated workout you haven't edited. Generated workouts that no longer look like a workout are removed, leaving the activity unstructured.
 
 Setup:
 1. Create an API application at <https://www.strava.com/settings/api>. Set **Authorization Callback Domain** to `localhost`. A Strava app has one callback domain, so use a second app, or change it, for a deployed domain.

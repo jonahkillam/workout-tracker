@@ -72,6 +72,9 @@ function activity(sport: Sport, pieces: Piece[], laps?: 'pieces' | Lap[]) {
 const text = (a: { rec: Recording; streams: RecordingStreams }, profile = NO_THRESHOLDS) =>
   detectText(a.rec, a.streams, profile)?.rawText
 
+const structured = (a: { rec: Recording; streams: RecordingStreams }, profile = NO_THRESHOLDS) =>
+  detectText(a.rec, a.streams, profile)?.structured
+
 const reps = (n: number, work: Piece, rest: Piece): Piece[] =>
   Array.from({ length: n }, (_, i) => (i < n - 1 ? [work, rest] : [work])).flat()
 
@@ -208,5 +211,42 @@ describe('detectBlocks', () => {
     const d = detectText(a.rec, a.streams, NO_THRESHOLDS)!
     expect(serializeBlocks(d.blocks)).toBe(d.rawText)
     expect(parseWorkout(d.rawText).blocks).toEqual(d.blocks)
+  })
+
+  describe('only structures what clearly looks like a workout', () => {
+    it('marks interval sessions structured', () => {
+      expect(structured(activity('run', [[600, 3], ...reps(5, [180, 4.2], [120, 2.5]), [600, 3]]))).toBe(true)
+      expect(structured(activity('run', [[600, 3], ...reps(6, [160, 5], [90, 2.5]), [600, 3]], 'pieces'))).toBe(true)
+      expect(structured(activity('ride', [[600, 150], ...reps(3, [600, 280], [300, 120]), [600, 150]]))).toBe(true)
+    })
+
+    it('marks steady runs, runs with stops and hills unstructured', () => {
+      expect(structured(activity('run', [[2400, 3]]))).toBe(false)
+      expect(structured(activity('run', [[1200, 3], [1200, 0], [1200, 3]]))).toBe(false)
+      const hills = Array.from({ length: 6 }, (_, i): Piece => (i % 2 ? [300, 5.5, -0.1] : [300, 2, 0.1]))
+      expect(structured(activity('run', hills))).toBe(false)
+    })
+
+    it('leaves a single surge unstructured', () => {
+      const a = activity('run', [[900, 3], [300, 4.2], [900, 3]])
+      expect(structured(a)).toBe(false)
+      expect(text(a)).toMatch(/^35m @ \d:\d\d\/km$/)
+    })
+
+    it('treats a tempo broken up by irregular stops as one effort', () => {
+      const a = activity('run', [[600, 3], [300, 4.2], [25, 0], [420, 4.2], [50, 0], [240, 4.2], [35, 0], [500, 4.2], [600, 3]])
+      expect(structured(a)).toBe(false)
+      expect(text(a)).not.toMatch(/work|x/)
+    })
+
+    it('keeps regular reps with standing recoveries, even with no warm-up', () => {
+      const a = activity('run', reps(4, [160, 5], [90, 0]))
+      expect(structured(a, { ...NO_THRESHOLDS, thresholdSpeed: 16 })).toBe(true)
+      expect(text(a, { ...NO_THRESHOLDS, thresholdSpeed: 16 })).toMatch(/^4x800mtr\/90s -r/)
+    })
+
+    it('leaves reps with recoveries barely slower than the reps unstructured', () => {
+      expect(structured(activity('run', [[600, 3], ...reps(5, [180, 4.2], [120, 3.85]), [600, 3]]))).toBe(false)
+    })
   })
 })

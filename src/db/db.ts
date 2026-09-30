@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   profileOf,
   THRESHOLD_KEYS,
+  type Profile,
   type Recording,
   type RecordingStreams,
   type Settings,
@@ -69,16 +70,19 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 /**
- * Saves settings. Workouts keep the thresholds they were logged with, but any
- * workout with no value recorded for a threshold takes the newly set one.
+ * Saves settings. Workouts (and recordings, for unstructured activities) keep
+ * the thresholds they were logged with, but any with no value recorded for a
+ * threshold takes the newly set one.
  */
 export async function saveSettings(s: Settings) {
-  await db.transaction('rw', db.settings, db.workouts, async () => {
+  const fill = (row: { profile?: Profile }) => {
+    row.profile ??= profileOf(s)
+    for (const k of THRESHOLD_KEYS) if (row.profile[k] === undefined && s[k] !== undefined) row.profile[k] = s[k]
+  }
+  await db.transaction('rw', db.settings, db.workouts, db.recordings, async () => {
     await db.settings.put({ ...s, id: 'settings' })
-    await db.workouts.toCollection().modify((w) => {
-      w.profile ??= profileOf(s)
-      for (const k of THRESHOLD_KEYS) if (w.profile[k] === undefined && s[k] !== undefined) w.profile[k] = s[k]
-    })
+    await db.workouts.toCollection().modify(fill)
+    await db.recordings.toCollection().modify(fill)
   })
 }
 

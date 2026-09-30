@@ -1,6 +1,7 @@
-import type { Profile, Sport, Workout } from '../model/types'
+import type { Profile, Recording, Sport, Workout } from '../model/types'
 import { addDays, weekDays } from './dates'
-import { addTotals, emptyTotals, workoutTotals, type Totals } from './workout'
+import { recordedTotals, sessionTotals } from './recorded'
+import { addTotals, emptyTotals, type Totals } from './workout'
 
 export interface WeekSummary {
   start: string
@@ -10,23 +11,49 @@ export interface WeekSummary {
   dailyLoad: number[]
 }
 
-export function summarizeWeek(start: string, workouts: Workout[], fallback: Profile): WeekSummary {
+/** Recordings that no workout links to: unstructured activities, counted as sessions of their own. */
+export function unlinkedRecordings(workouts: Workout[], recordings: Recording[]): Recording[] {
+  const linked = new Set(workouts.map((w) => w.recording?.id).filter(Boolean))
+  return recordings.filter((r) => !linked.has(r.id))
+}
+
+/**
+ * Totals for the week. Workouts count from their recording where it measures
+ * them properly (see `sessionTotals`); unlinked recordings count as recorded.
+ */
+export function summarizeWeek(
+  start: string,
+  workouts: Workout[],
+  fallback: Profile,
+  recordings: Recording[] = [],
+  unlinked = unlinkedRecordings(workouts, recordings),
+): WeekSummary {
   const days = weekDays(start)
   const summary: WeekSummary = { start, total: emptyTotals(), bySport: {}, dailyLoad: days.map(() => 0) }
-  for (const w of workouts) {
-    const dayIndex = days.indexOf(w.date)
-    if (dayIndex === -1) continue
-    const t = workoutTotals(w, fallback)
+  const add = (date: string, sport: Sport, t: Totals) => {
+    const dayIndex = days.indexOf(date)
+    if (dayIndex === -1) return
     summary.total = addTotals(summary.total, t)
-    const prev = summary.bySport[w.sport]
-    summary.bySport[w.sport] = { ...addTotals(prev ?? emptyTotals(), t), count: (prev?.count ?? 0) + 1 }
+    const prev = summary.bySport[sport]
+    summary.bySport[sport] = { ...addTotals(prev ?? emptyTotals(), t), count: (prev?.count ?? 0) + 1 }
     summary.dailyLoad[dayIndex] += t.load
   }
+  const byId = new Map(recordings.map((r) => [r.id, r]))
+  for (const w of workouts) add(w.date, w.sport, sessionTotals(w, w.recording && byId.get(w.recording.id), fallback))
+  for (const r of unlinked) add(r.localDate, r.sport, recordedTotals(r, r.sport, r.profile ?? fallback))
   return summary
 }
 
 /** Summaries for `count` consecutive weeks ending with the week starting `lastStart`. */
-export function summarizeWeeks(lastStart: string, count: number, workouts: Workout[], fallback: Profile): WeekSummary[] {
+export function summarizeWeeks(
+  lastStart: string,
+  count: number,
+  workouts: Workout[],
+  fallback: Profile,
+  recordings: Recording[] = [],
+): WeekSummary[] {
+  // Linked across all weeks, in case a workout and its recording fall either side of a week boundary.
+  const unlinked = unlinkedRecordings(workouts, recordings)
   return Array.from({ length: count }, (_, i) => {
     const start = addDays(lastStart, -7 * (count - 1 - i))
     const end = addDays(start, 6)
@@ -34,6 +61,8 @@ export function summarizeWeeks(lastStart: string, count: number, workouts: Worko
       start,
       workouts.filter((w) => w.date >= start && w.date <= end),
       fallback,
+      recordings,
+      unlinked.filter((r) => r.localDate >= start && r.localDate <= end),
     )
   })
 }

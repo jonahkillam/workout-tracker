@@ -30,6 +30,8 @@ mise run test:watch
 | `src/db/db.ts` | Dexie schema (DB `training-log`), save/import/export |
 | `src/strava/` | OAuth client (`auth.ts`), API reads (`api.ts`), response mapping (`map.ts`), week sync (`sync.ts`, `useWeekSync.ts`) |
 | `src/recordings/match.ts` | Recording ↔ workout auto-linking and same-activity dedupe |
+| `src/recordings/intervals.ts`, `autolog.ts`, `recorded.ts` | Structure detection, auto-logging, recorded summaries |
+| `src/metrics/recorded.ts` | Totals from recorded data |
 | `server/strava.ts`, `api/strava/[action].ts` | Token exchange/refresh/revoke (holds the client secret) |
 | `src/ui/week/` | Main view: `WeekTable` (one row per session) and `WeekPanels` |
 | `src/ui/entry/` | Workout editor: shorthand input, timeline, editable step table |
@@ -53,7 +55,9 @@ Units inside the model: seconds, metres, km/h, and incline as percent grade. Con
 - **Totals iterate `expand(blocks)`**, never `count ×` multiplication, so `skipLastRest` is respected.
 - **Dexie migrations:** never edit an existing `db.version(n)`. Add a new version with an `upgrade`.
 - **Recordings are source-agnostic.** Strava is the first source and FIT import is planned. A `Recording` holds the summary and laps; its per-sample arrays live in `recordingStreams` as typed arrays. A workout links to at most one recording (`Workout.recording`), which also stores how its steps line up with the recording (`alignment`).
-  - Totals and planned zones never depend on recordings; recordings only add heart rate and other recorded data.
+  - Week totals (table rows, footer, panels) come from the recording for runs with a GAP histogram and rides with a power histogram (`sessionTotals` in `metrics/recorded.ts`). Unlinked recordings count as unstructured sessions (`recordedTotals`). Treadmill and stair workouts, the editor, the viewer and planned zones stay plan-based.
+  - `Recording.recorded` holds the moving time, distance and GAP/power/HR histograms, computed once from the streams (`recordings/recorded.ts`). Histograms don't depend on thresholds; zone them with `w.profile ?? fallback`, or `Recording.profile` for unlinked ones.
+  - Auto-logging only creates a workout when detection finds clear workout structure (`looksLikeWorkout` in `recordings/intervals.ts`). Other runs and rides are marked `Recording.unstructured` and stay unstructured activities.
   - Auto-linking never overrides a manual link.
   - Recordings starting within 60 s of each other are the same activity and are merged.
 - **Strava token boundary.** Only the code exchange, refresh and revoke go through `/api/strava/*`, because they need the client secret and Strava's token endpoint has no CORS. Data calls go straight from the browser to `https://www.strava.com/api/v3` (CORS allowed).

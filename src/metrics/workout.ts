@@ -52,6 +52,30 @@ export function speedForGap(flatSpeed: number, grade: number): number {
   return flatSpeed / flatEquivalentRatio(grade)
 }
 
+/** Vertical metres per hour at `speed` km/h along a slope of `grade`. */
+export function climbRate(speed: number, grade: number): number {
+  return verticalGain(speed * 1000, grade)
+}
+
+/** Inverse of `climbRate`: km/h along `grade` that climbs `metresPerHour`. Undefined on the flat or downhill. */
+export function speedForClimbRate(metresPerHour: number, grade: number): number | undefined {
+  const perKm = verticalGain(1000, grade)
+  return perKm > 0 ? metresPerHour / perKm : undefined
+}
+
+/** Vertical metres per hour on a stair climber at `stepRate` steps/min. */
+export function stairClimbRate(stepRate: number, stepHeight: number): number {
+  return stepRate * 60 * stepHeight
+}
+
+/** Grade a stair climber is treated as for GAP: the steepest grade the Minetti model covers. */
+export const STAIR_GRADE = 0.45
+
+/** Grade-adjusted speed for climbing `metresPerHour` on a stair climber, km/h, treated as running up a 45% grade. */
+export function stairGap(metresPerHour: number): number {
+  return gradeAdjustedSpeed(speedForClimbRate(metresPerHour, STAIR_GRADE)!, STAIR_GRADE)
+}
+
 /** Average grade-adjusted speed over the parts of a workout with known distance, km/h. */
 export function averageGap(t: Totals): number | undefined {
   return t.gapTime > 0 && t.gapDistance > 0 ? (t.gapDistance / t.gapTime) * 3.6 : undefined
@@ -62,7 +86,8 @@ export function verticalGain(distance: number, grade: number): number {
   return grade > 0 ? (distance * grade) / Math.sqrt(1 + grade * grade) : 0
 }
 
-function band(ratio: number, bounds: number[]): number {
+/** Zone 1-5 for `ratio`: below `bounds[0]` is Z1, at or above the last bound Z5. */
+export function band(ratio: number, bounds: number[]): number {
   const i = bounds.findIndex((b) => ratio < b)
   return i === -1 ? 5 : i + 1
 }
@@ -71,7 +96,12 @@ export function rpeZone(rpe: number): number {
   return band(rpe, [3.5, 5.5, 6.5, 8.5])
 }
 
-const RUNNING: Sport[] = ['run', 'treadmill']
+/** Zone bounds as fractions of FTP, LTHR and threshold pace (flat-equivalent speed). */
+export const POWER_BOUNDS = [0.55, 0.75, 0.9, 1.05]
+export const HR_BOUNDS = [0.85, 0.9, 0.95, 1]
+export const PACE_BOUNDS = [0.78, 0.88, 0.95, 1.02]
+
+export const RUNNING: Sport[] = ['run', 'treadmill']
 
 /** Stats for a single occurrence of a step. */
 export function stepStats(step: Step, sport: Sport, profile: Profile, workoutRpe?: number): StepStats {
@@ -105,12 +135,12 @@ export function stepZone(step: Step, sport: Sport, profile: Profile, workoutRpe?
   const t = step.targets
   if (t.zone) return Math.round(mid(t.zone)!)
   if (t.rpe !== undefined) return rpeZone(t.rpe)
-  if (t.power && profile.ftp) return band(mid(t.power)! / profile.ftp, [0.55, 0.75, 0.9, 1.05])
-  if (t.hr && profile.lthr) return band(mid(t.hr)! / profile.lthr, [0.85, 0.9, 0.95, 1])
+  if (t.power && profile.ftp) return band(mid(t.power)! / profile.ftp, POWER_BOUNDS)
+  if (t.hr && profile.lthr) return band(mid(t.hr)! / profile.lthr, HR_BOUNDS)
   if (t.speed && profile.thresholdSpeed && RUNNING.includes(sport)) {
     const grade = (mid(t.incline) ?? 0) / 100
     const flatSpeed = mid(t.speed)! * flatEquivalentRatio(grade)
-    return band(flatSpeed / profile.thresholdSpeed, [0.78, 0.88, 0.95, 1.02])
+    return band(flatSpeed / profile.thresholdSpeed, PACE_BOUNDS)
   }
   switch (step.kind) {
     case 'wu':
@@ -127,6 +157,13 @@ export function stepZone(step: Step, sport: Sport, profile: Profile, workoutRpe?
 
 /** Zone weights for load when no session RPE is given, on the same scale as RPE. */
 const ZONE_LOAD_WEIGHT = [2, 3, 5, 7, 9]
+
+/** Training load: session RPE × minutes if given, otherwise minutes in each zone weighted by zone. */
+export function loadFor(zoneTime: number[], duration: number, rpe?: number): number {
+  return rpe !== undefined
+    ? (rpe * duration) / 60
+    : zoneTime.reduce((sum, secs, i) => sum + (secs / 60) * ZONE_LOAD_WEIGHT[i], 0)
+}
 
 /**
  * Totals for a workout, using the thresholds snapshotted on it. `fallback` (usually
@@ -177,10 +214,7 @@ export function workoutTotals(
     totals.zoneTime[(w.rpe !== undefined ? rpeZone(w.rpe) : 2) - 1] += extra
   }
 
-  totals.load =
-    w.rpe !== undefined
-      ? (w.rpe * totals.duration) / 60
-      : totals.zoneTime.reduce((sum, secs, i) => sum + (secs / 60) * ZONE_LOAD_WEIGHT[i], 0)
+  totals.load = loadFor(totals.zoneTime, totals.duration, w.rpe)
   return totals
 }
 

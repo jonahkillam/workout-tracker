@@ -3,7 +3,17 @@ import { DEFAULT_SETTINGS, type Workout } from '../model/types'
 import { parseWorkout } from '../parser/parser'
 import { isoWeek } from './dates'
 import { acuteChronicRatio, summarizeWeeks } from './week'
-import { averageGap, flatEquivalentRatio, gradeAdjustedSpeed, speedForGap, workoutTotals } from './workout'
+import {
+  averageGap,
+  climbRate,
+  flatEquivalentRatio,
+  gradeAdjustedSpeed,
+  speedForClimbRate,
+  speedForGap,
+  stairClimbRate,
+  stairGap,
+  workoutTotals,
+} from './workout'
 
 const totals = (sport: Workout['sport'], text: string, extra: Partial<Workout> = {}) =>
   workoutTotals({ sport, blocks: parseWorkout(text).blocks, ...extra }, DEFAULT_SETTINGS)
@@ -30,7 +40,7 @@ describe('workoutTotals', () => {
   })
 
   it('computes stair climber gain from step rate or floors', () => {
-    expect(totals('stair', '30m @ 70spm').vertical).toBeCloseTo(30 * 70 * 0.2)
+    expect(totals('stair', '30m @ 70spm').vertical).toBeCloseTo(30 * 70 * DEFAULT_SETTINGS.stairStepHeight)
     expect(totals('stair', '100fl').vertical).toBeCloseTo(325)
     expect(totals('stair', '30m @ 70spm').distance).toBe(0)
   })
@@ -67,6 +77,27 @@ describe('grade-adjusted pace', () => {
     const expected = ((10 + gradeAdjustedSpeed(10, 0.1)) / 2)
     expect(averageGap(t)).toBeCloseTo(expected)
     expect(averageGap(totals('stair', '30m @ 70spm'))).toBeUndefined()
+  })
+})
+
+describe('climb rate', () => {
+  it('converts treadmill speed and incline to vertical metres per hour', () => {
+    expect(climbRate(6, 0)).toBe(0)
+    expect(climbRate(6, 0.15)).toBeCloseTo((6000 * 0.15) / Math.sqrt(1 + 0.15 ** 2))
+    expect(speedForClimbRate(climbRate(6, 0.15), 0.15)).toBeCloseTo(6)
+    expect(speedForClimbRate(800, 0)).toBeUndefined()
+  })
+
+  it('uses step rate and step height on the stair climber', () => {
+    expect(DEFAULT_SETTINGS.stairStepHeight).toBe(3.25 / 16)
+    expect(stairClimbRate(80, 0.2)).toBeCloseTo(960)
+  })
+
+  it('treats the stair climber as a 45% grade for GAP', () => {
+    const along = speedForClimbRate(975, 0.45)!
+    expect(climbRate(along, 0.45)).toBeCloseTo(975)
+    expect(stairGap(975)).toBeCloseTo(gradeAdjustedSpeed(along, 0.45))
+    expect(stairGap(975)).toBeGreaterThan(12)
   })
 })
 

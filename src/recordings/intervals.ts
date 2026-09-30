@@ -474,13 +474,68 @@ function withPauses(pieces: Piece[], stopped: [number, number][]): Piece[] {
   }, [])
 }
 
+/** Whether a rep's recovery is a real one: mostly moving, and clearly easier than the rep. */
+function activeRecovery(rec: Recording, rep: Rep): boolean {
+  return !!rep.rest && rep.rest.moving >= span(rep.rest) / 2 && clearlyAbove(rec, rep.work.effort, rep.rest.effort)
+}
+
+/** Reps that group under `fits` from the first one on: same distance or duration, and even recoveries. */
+function regular(rec: Recording, reps: Rep[]): boolean {
+  return reps.every((rep, i) => i === 0 || fits(rec, reps.slice(0, i), rep))
+}
+
+/** Moving-time-weighted mean effort over some stretches, or undefined if none of them moved. */
+function meanEffort(stats: Stats[]): number | undefined {
+  const moving = stats.reduce((a, s) => a + s.moving, 0)
+  return moving ? stats.reduce((a, s) => a + (s.effort ?? 0) * s.moving, 0) / moving : undefined
+}
+
+/**
+ * Whether labelled pieces clearly look like a workout rather than an ordinary
+ * run or ride with some variation in it:
+ * - Reps separated only by standing still (lights, a gate, a photo) are one
+ *   broken effort, unless they're regular, as reps with standing recoveries are.
+ * - That leaves at least two efforts, so a single surge or fast finish doesn't count.
+ * - The work is clearly harder than the rest of the moving time.
+ */
+function looksLikeWorkout(rec: Recording, pieces: Piece[], statsOf: (p: Piece) => Stats): boolean {
+  const reps: Rep[] = []
+  pieces.forEach((p, k) => {
+    if (p.kind !== 'work') return
+    const next = pieces[k + 1]
+    reps.push({ work: statsOf(p), rest: next?.kind === 'rest' ? statsOf(next) : undefined })
+  })
+  let efforts = 0
+  let chain: Rep[] = []
+  const endChain = () => {
+    if (chain.length) efforts += chain.length > 1 && regular(rec, chain) ? chain.length : 1
+    chain = []
+  }
+  for (const rep of reps) {
+    chain.push(rep)
+    if (activeRecovery(rec, rep)) endChain()
+  }
+  endChain()
+  if (efforts < 2) return false
+  const easy = meanEffort(pieces.filter((p) => p.kind !== 'work' && p.kind !== 'pause').map(statsOf))
+  return easy === undefined || clearlyAbove(rec, meanEffort(reps.map((r) => r.work)), easy)
+}
+
+/** Detected blocks, and whether they have workout structure (reps) or are a single unstructured effort. */
+export interface Detected {
+  blocks: Block[]
+  structured: boolean
+}
+
 /**
  * The recording's structure as blocks, or undefined if it can't be worked out
  * (wrong sport, or no speed/power data). Steps follow the recording's clock, so
  * the plan lines up with it at offset 0. Stops of a minute or more are `pause`
- * steps, which keep that alignment without counting as training.
+ * steps, which keep that alignment without counting as training. Unless it
+ * clearly looks like a workout (see `looksLikeWorkout`), it's steady stretches
+ * between pauses, marked unstructured.
  */
-export function detectBlocks(rec: Recording, streams: RecordingStreams | undefined, profile: Profile): Block[] | undefined {
+export function detectBlocks(rec: Recording, streams: RecordingStreams | undefined, profile: Profile): Detected | undefined {
   if (!canDetect(rec, streams)) return undefined
   const s = streams!
   const m = metric(rec, s)
@@ -491,6 +546,7 @@ export function detectBlocks(rec: Recording, streams: RecordingStreams | undefin
     rec.laps.length >= 3 && !isAutoLaps(rec.laps) ? lapSegments(rec, s, m, profile) : streamSegments(rec, s, m, moving, profile),
     stopped.flat(),
   )
+  const statsOf = (p: { start: number; end: number }) => statsFor(rec, s, m, p.start, p.end)
   const effortOf = (a: number, z: number) => statsFor(rec, s, m, a, z).effort
   const segs = clearWork(rec, found, (g) => effortOf(g.start, g.end))
   const first = segs.findIndex((g) => g.high)
@@ -501,8 +557,11 @@ export function detectBlocks(rec: Recording, streams: RecordingStreams | undefin
     end: g.end,
     kind: g.high ? 'work' : first !== -1 && i > first && i < last ? 'rest' : 'steady',
   }))
-  const pieces = withPauses(first === -1 ? [{ ...labelled[0], end: labelled[labelled.length - 1].end }] : labelled, stopped)
-  if (first !== -1) {
+  const steady = () => withPauses([{ kind: 'steady', start: labelled[0].start, end: labelled[labelled.length - 1].end }], stopped)
+  let pieces = first === -1 ? steady() : withPauses(labelled, stopped)
+  const structured = first !== -1 && looksLikeWorkout(rec, pieces, statsOf)
+  if (!structured) pieces = steady()
+  else {
     // The first stretch is a warm-up, and the last a cool-down, only if clearly easier than the one beside it.
     const active = pieces.filter((p) => p.kind !== 'pause')
     const [head, afterHead] = active
@@ -523,13 +582,13 @@ export function detectBlocks(rec: Recording, streams: RecordingStreams | undefin
   }
   for (let k = 0; k < pieces.length; k++) {
     const p = pieces[k]
-    const stats = statsFor(rec, s, m, p.start, p.end)
+    const stats = statsOf(p)
     if (p.kind === 'pause') {
       flush()
       blocks.push({ type: 'step', kind: 'pause', duration: Math.round(p.end - p.start), targets: {} })
     } else if (p.kind === 'work') {
       const next = pieces[k + 1]
-      const rep: Rep = { work: stats, rest: next?.kind === 'rest' ? statsFor(rec, s, m, next.start, next.end) : undefined }
+      const rep: Rep = { work: stats, rest: next?.kind === 'rest' ? statsOf(next) : undefined }
       if (rep.rest) k++
       if (group.length && group[group.length - 1].rest && fits(rec, group, rep)) group.push(rep)
       else {
@@ -542,5 +601,5 @@ export function detectBlocks(rec: Recording, streams: RecordingStreams | undefin
     }
   }
   flush()
-  return blocks
+  return { blocks, structured }
 }
