@@ -4,7 +4,7 @@ A training log for running, treadmill (incline), stair climber and cycling worko
 
 ## Stack and commands
 
-TypeScript + React 19 + Vite. The app reads and writes a local copy of the signed-in user's data in the browser (IndexedDB via Dexie) and syncs it with Supabase (Postgres, Auth), provisioned through the Vercel Marketplace integration. Sign-in is by email link or 6-digit code. The only server code is Strava token handling (`server/strava.ts`), served by the Vite dev/preview server locally and by a Vercel function (`api/strava/[action].ts`) when deployed. Node is pinned by `mise.toml`.
+TypeScript + React 19 + Vite. The app reads and writes a local copy of the signed-in user's data in the browser (IndexedDB via Dexie) and syncs it with Supabase (Postgres, Auth), provisioned through the Vercel Marketplace integration. Sign-in is by a 6-digit code sent by email. The only server code is Strava token handling (`server/strava.ts`), served by the Vite dev/preview server locally and by a Vercel function (`api/strava/[action].ts`) when deployed. Node is pinned by `mise.toml`.
 
 ```
 mise run db:start    # local Supabase (Docker); emails go to Mailpit, http://127.0.0.1:54424

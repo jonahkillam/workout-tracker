@@ -238,8 +238,8 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
-# Sign-in emails carry both the link and the 6-digit code, so either works (the code helps when the link opens
-# in another browser). New users get the confirmation template when confirmations are on (the hosted default).
+# Sign-in emails carry the 6-digit code only, no link. The template says the code lasts 1 hour: keep that in step
+# with otp_expiry. New users get the confirmation template when confirmations are on (the hosted default).
 [auth.email.template.magic_link]
 subject = "Your Training notebook sign-in code"
 content_path = "./supabase/templates/magic_link.html"

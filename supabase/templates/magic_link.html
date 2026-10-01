@@ -1,3 +1,109 @@
-<p>Your sign-in code is <strong>{{ .Token }}</strong>.</p>
-<p>Or <a href="{{ .ConfirmationURL }}">sign in with this link</a>.</p>
-<p>If you didn't ask to sign in, ignore this email.</p>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="supported-color-schemes" content="light dark" />
+    <title>Your Training notebook sign-in code</title>
+    <style>
+      @media (prefers-color-scheme: dark) {
+        .bg { background: #14161a !important; }
+        .card { background: #1c1f24 !important; border-color: #30353d !important; }
+        .text { color: #e6e8eb !important; }
+        .muted { color: #9aa1ab !important; }
+        .code { background: #14161a !important; border-color: #30353d !important; color: #ffffff !important; }
+        .rule { border-color: #30353d !important; }
+      }
+    </style>
+  </head>
+  <body class="bg" style="margin: 0; padding: 0; background: #f4f5f7; -webkit-text-size-adjust: 100%">
+    <div style="display: none; max-height: 0; overflow: hidden; opacity: 0">
+      Your sign-in code is {{ .Token }}. It expires in 1 hour.
+    </div>
+    <table role="presentation" class="bg" width="100%" cellpadding="0" cellspacing="0" border="0" style="background: #f4f5f7">
+      <tr>
+        <td align="center" style="padding: 32px 16px">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width: 440px">
+            <tr>
+              <td
+                class="text"
+                style="
+                  padding: 0 4px 16px;
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                  font-size: 15px;
+                  font-weight: 600;
+                  color: #1a1d21;
+                "
+              >
+                Training notebook
+              </td>
+            </tr>
+            <tr>
+              <td
+                class="card"
+                style="
+                  padding: 28px 28px 24px;
+                  background: #ffffff;
+                  border: 1px solid #dfe2e6;
+                  border-radius: 8px;
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                "
+              >
+                <h1 class="text" style="margin: 0 0 8px; font-size: 20px; line-height: 26px; font-weight: 600; color: #1a1d21">
+                  Your sign-in code
+                </h1>
+                <p class="muted" style="margin: 0 0 20px; font-size: 14px; line-height: 21px; color: #5b6470">
+                  Enter this code on the sign-in page to continue.
+                </p>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td
+                      class="code"
+                      align="center"
+                      style="
+                        padding: 16px 12px;
+                        background: #f4f5f7;
+                        border: 1px solid #dfe2e6;
+                        border-radius: 6px;
+                        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+                        font-size: 32px;
+                        line-height: 38px;
+                        font-weight: 600;
+                        letter-spacing: 8px;
+                        color: #1a1d21;
+                      "
+                    >
+                      {{ .Token }}
+                    </td>
+                  </tr>
+                </table>
+                <p class="muted" style="margin: 16px 0 0; font-size: 13px; line-height: 20px; color: #5b6470">
+                  The code expires in 1 hour and can be used once.
+                </p>
+                <hr class="rule" style="margin: 24px 0 16px; border: 0; border-top: 1px solid #dfe2e6" />
+                <p class="muted" style="margin: 0; font-size: 13px; line-height: 20px; color: #5b6470">
+                  If you didn&rsquo;t ask to sign in, you can ignore this email. Nobody can sign in without the code.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td
+                class="muted"
+                style="
+                  padding: 16px 4px 0;
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                  font-size: 12px;
+                  line-height: 18px;
+                  color: #5b6470;
+                "
+              >
+                Sent to {{ .Email }} because someone asked to sign in to Training notebook.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

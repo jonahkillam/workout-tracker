@@ -5,8 +5,8 @@ import { Logo } from '../ui/Logo'
 const RESEND_AFTER = 30
 
 /**
- * Email sign-in: Supabase sends one email with both a link and a 6-digit code. The code is for when the link
- * opens in a different browser. The address field is kept generic so a phone number can be added later.
+ * Email sign-in: Supabase sends an email with a 6-digit code to type in here. The address field is kept generic
+ * so a phone number can be added later.
  */
 export function SignIn({ error: initialError }: { error?: string }) {
   const [email, setEmail] = useState('')
@@ -66,7 +66,7 @@ export function SignIn({ error: initialError }: { error?: string }) {
           }}
         >
           <h2>Sign in</h2>
-          <p className="signin-help">We&rsquo;ll email you a sign-in link and a 6-digit code. No password needed.</p>
+          <p className="signin-help">We&rsquo;ll email you a 6-digit sign-in code. No password needed.</p>
           <label className="field">
             <span>Email</span>
             <input
@@ -92,7 +92,7 @@ export function SignIn({ error: initialError }: { error?: string }) {
         >
           <h2>Check your email</h2>
           <p className="signin-help">
-            We sent a sign-in link and a code to <strong>{sentTo}</strong>. Open the link, or enter the code here.
+            We sent a 6-digit code to <strong>{sentTo}</strong>. Enter it here.
           </p>
           <label className="field">
             <span>Code</span>
