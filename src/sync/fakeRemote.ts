@@ -1,13 +1,14 @@
 // An in-memory stand-in for the Supabase sync functions, with the same rules as supabase/migrations: last write
 // wins on client_ts, deletes are tombstones, every write takes the next rev. For tests.
 import type { Change, Remote, RemoteRow } from './engine'
+import type { SyncedTable } from './outbox'
 
 export class FakeRemote implements Remote {
   rows = new Map<string, RemoteRow & { client_ts: number }>()
   rev = 0
 
   async push(changes: Change[]) {
-    const rejected: { table: string; key: string }[] = []
+    const rejected: { table: SyncedTable; key: string }[] = []
     for (const c of changes) {
       const id = `${c.table}/${c.key}`
       const current = this.rows.get(id)
@@ -29,7 +30,7 @@ export class FakeRemote implements Remote {
       .map((r) => ({ table: r.table, key: r.key, doc: r.doc, deleted: r.deleted, rev: r.rev }))
   }
 
-  async fetch(table: string, keys: string[]) {
+  async fetch(table: SyncedTable, keys: string[]) {
     return keys.flatMap((key) => {
       const r = this.rows.get(`${table}/${key}`)
       return r ? [{ table: r.table, key: r.key, doc: r.doc, deleted: r.deleted, rev: r.rev }] : []
@@ -37,11 +38,11 @@ export class FakeRemote implements Remote {
   }
 
   /** Writes a row as if another device had pushed it. */
-  put(table: string, key: string, doc: RemoteRow['doc'], client_ts: number) {
+  put(table: SyncedTable, key: string, doc: RemoteRow['doc'], client_ts: number) {
     this.rows.set(`${table}/${key}`, { table, key, doc, deleted: !doc, client_ts, rev: ++this.rev })
   }
 
-  get(table: string, key: string) {
+  get(table: SyncedTable, key: string) {
     return this.rows.get(`${table}/${key}`)
   }
 }

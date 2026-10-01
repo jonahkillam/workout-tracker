@@ -63,6 +63,12 @@ describe('workoutTotals', () => {
   it('counts steps whose duration is unknown', () => {
     expect(totals('run', '5km').unknownDuration).toBe(1)
   })
+
+  it('counts zones outside 1-5 as the nearest zone', () => {
+    expect(totals('run', '10m @ Z7').zoneTime).toEqual([0, 0, 0, 0, 600])
+    expect(totals('run', '10m @ Z0').zoneTime).toEqual([600, 0, 0, 0, 0])
+    expect(totals('run', '10m @ Z7').load).toBe(totals('run', '10m @ Z5').load)
+  })
 })
 
 describe('grade-adjusted pace', () => {

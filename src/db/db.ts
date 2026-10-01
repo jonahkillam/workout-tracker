@@ -3,7 +3,6 @@ import {
   DEFAULT_SETTINGS,
   profileOf,
   THRESHOLD_KEYS,
-  NOTE_KINDS,
   type Note,
   type Profile,
   type Recording,
@@ -30,16 +29,9 @@ export interface SyncMeta {
   lastSyncedAt?: number
 }
 
-/** A recording whose streams still need uploading to Storage. */
-export interface StreamUpload {
-  recordingId: string
-  queuedAt: number
-}
-
 /**
  * The browser's copy of the signed-in user's data. The UI reads and writes only this; `sync/engine.ts` keeps it
- * in step with Supabase. Named apart from the pre-account `training-log` database, which is left untouched
- * (see `db/legacy.ts`).
+ * in step with Supabase.
  */
 export const db = new Dexie('training-log-sync') as Dexie & {
   workouts: EntityTable<Workout, 'id'>
@@ -51,22 +43,20 @@ export const db = new Dexie('training-log-sync') as Dexie & {
   stravaConnection: EntityTable<StravaConnection, 'id'>
   outbox: Table<OutboxEntry, [SyncedTable, string]>
   syncMeta: EntityTable<SyncMeta, 'id'>
-  streamUploads: EntityTable<StreamUpload, 'recordingId'>
 }
 
-// Schema changes from here on: add a new db.version(n) with an upgrade; never edit this one. Synced documents
-// also live on the server, so a change to their shape needs a case in sync/docs.ts normalizeDoc too.
+// Schema changes from here on: add a new db.version(n) with an upgrade; never edit this one. Synced objects
+// also live in server tables, so a change to their shape needs a migration and a sync/rows.ts entry too.
 db.version(1).stores({
   workouts: 'id, date, sport, updatedAt, recording.id',
   weekNotes: 'weekStart',
   settings: 'id',
-  recordings: 'id, localDate, &stravaId, fitHash, startTime',
+  recordings: 'id, localDate',
   recordingStreams: 'recordingId',
   stravaWeekFetch: 'weekStart',
   stravaConnection: 'id',
   outbox: '[table+key]',
   syncMeta: 'id',
-  streamUploads: 'recordingId',
 })
 
 db.use(outboxMiddleware)
@@ -76,21 +66,10 @@ export function clearLocalData() {
   return withoutOutbox(db, db.tables.map((t) => t.name), () => Promise.all(db.tables.map((t) => t.clear())))
 }
 
-/** Reads notes in either the current shape or the old single string, dropping empty ones. */
-export function normalizeNotes(n: unknown): Note[] | undefined {
-  const list: Note[] =
-    typeof n === 'string'
-      ? [{ kind: 'general', text: n }]
-      : Array.isArray(n)
-        ? n.map(x => ({ ...x, kind: NOTE_KINDS.includes(x?.kind) ? x.kind : 'general', text: String(x?.text ?? '') }))
-        : []
-  const kept = list.map(x => ({ ...x, text: x.text.trim() })).filter(x => x.text)
+/** Trims notes and drops empty ones. */
+export function normalizeNotes(n: Note[]): Note[] | undefined {
+  const kept = n.map(x => ({ ...x, text: x.text.trim() })).filter(x => x.text)
   return kept.length ? kept : undefined
-}
-
-/** Removes the pre-release database, which never held real data. */
-export function removeLegacyDatabase() {
-  return Dexie.delete('workout-tracker').catch(() => undefined)
 }
 
 export async function saveWorkout(w: Omit<Workout, 'id' | 'createdAt' | 'updatedAt'> & Partial<Workout>) {
@@ -144,8 +123,7 @@ export async function saveSettings(s: Settings) {
 }
 
 export interface ExportFile {
-  /** 2 held workout notes as a single string. */
-  version: 2 | 3
+  version: 3
   exportedAt: string
   workouts: Workout[]
   weekNotes: WeekNote[]
@@ -167,10 +145,9 @@ export async function exportAll(): Promise<ExportFile> {
 
 /** Merges an export into the database; newer records win. */
 export async function importAll(data: ExportFile) {
-  if (data.version !== 2 && data.version !== 3) throw new Error(`Unsupported export version ${data.version}`)
+  if (data.version !== 3) throw new Error(`Unsupported export version ${data.version}`)
   await db.transaction('rw', [db.workouts, db.weekNotes, db.settings, db.recordings], async () => {
-    for (const raw of data.workouts) {
-      const w = { ...raw, notes: normalizeNotes(raw.notes) }
+    for (const w of data.workouts) {
       const existing = await db.workouts.get(w.id)
       if (!existing || existing.updatedAt < w.updatedAt) await db.workouts.put(w)
     }

@@ -1,11 +1,12 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import type { Block, Profile, Repeat, SpeedUnit, Sport, Step, Targets } from '../../model/types'
 import { KIND_LABEL, STEP_KINDS } from '../../model/types'
 import { insertAt, moveBy, newStep, occurrences, removeAt, replaceAt, type Path } from '../../model/tree'
 import { stepStats } from '../../metrics/workout'
 import { amountText, fmtDistance, fmtDuration, fmtRange, fmtSpeed, fmtSpeedIn, mid } from '../../parser/format'
 import { parseWorkout } from '../../parser/parser'
-import { fmtTarget, TARGET_ORDER } from '../../parser/serialize'
+import { fmtTargets, TARGET_ORDER } from '../../parser/serialize'
+import { CommitInput } from '../common/CommitInput'
 
 interface Props {
   blocks: Block[]
@@ -16,36 +17,15 @@ interface Props {
   rpe?: number
   /** Recorded average HR per step, from the linked recording. */
   stepHr?: Map<Step, number>
+  /** Disables editing, e.g. while the text has errors that a rewrite would lose. */
+  readOnly?: boolean
 }
 
 const OTHER_KEYS = TARGET_ORDER.filter((k) => k !== 'speed' && k !== 'incline')
 
-/** Text input that commits on blur or Enter and resets if the value changes underneath. */
-function Cell({ value, onCommit, placeholder, label }: { value: string; onCommit: (v: string) => void; placeholder?: string; label: string }) {
-  const [draft, setDraft] = useState(value)
-  const [seen, setSeen] = useState(value)
-  if (seen !== value) {
-    setSeen(value)
-    setDraft(value)
-  }
-  return (
-    <input
-      value={draft}
-      placeholder={placeholder}
-      aria-label={label}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={() => draft !== value && onCommit(draft.trim())}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur()
-        if (e.key === 'Escape') setDraft(value)
-      }}
-    />
-  )
-}
-
-/** Parses an amount cell ("40s", "1km", "100fl") into step fields. */
+/** Parses an amount cell ("40s", "1km", "100fl") into step fields. Every step needs one, so empty is rejected. */
 function parseAmount(text: string): Pick<Step, 'duration' | 'distance' | 'floors'> | null {
-  if (!text) return { duration: undefined, distance: undefined, floors: undefined }
+  if (!text) return null
   const [b] = parseWorkout(text).blocks
   if (b?.type !== 'step') return null
   return { duration: b.duration, distance: b.distance, floors: b.floors }
@@ -60,7 +40,7 @@ function parseTargets(text: string, speedUnit: SpeedUnit, defaultUnit = ''): Tar
   return b?.type === 'step' ? b.targets : null
 }
 
-export function StepTable({ blocks, onChange, sport, profile, speedUnit, rpe, stepHr }: Props) {
+export function StepTable({ blocks, onChange, sport, profile, speedUnit, rpe, stepHr, readOnly }: Props) {
   const update = (path: Path, b: Block) => onChange(replaceAt(blocks, path, b))
 
   const setTargets = (path: Path, step: Step, keys: (keyof Targets)[], parsed: Targets | null) => {
@@ -97,8 +77,8 @@ export function StepTable({ blocks, onChange, sport, profile, speedUnit, rpe, st
             <td colSpan={2} style={indent}>
               <div className="repeat-head">
                 <div style={{ width: 52 }}>
-                  <Cell
-                    label="Repeat count"
+                  <CommitInput
+                    aria-label="Repeat count"
                     value={String(b.count)}
                     onCommit={(v) => {
                       const n = parseInt(v, 10)
@@ -137,7 +117,7 @@ export function StepTable({ blocks, onChange, sport, profile, speedUnit, rpe, st
 
       const s = stepStats(b, sport, profile, rpe)
       const t = b.targets
-      const other = OTHER_KEYS.map((k) => fmtTarget(k, t)).filter(Boolean).join(', ')
+      const other = fmtTargets(t, OTHER_KEYS)
       const computed = [
         b.duration === undefined && s.duration ? fmtDuration(s.duration) : '',
         b.distance === undefined && s.distance ? fmtDistance(Math.round(s.distance)) : '',
@@ -163,8 +143,8 @@ export function StepTable({ blocks, onChange, sport, profile, speedUnit, rpe, st
             </select>
           </td>
           <td>
-            <Cell
-              label="Duration or distance"
+            <CommitInput
+              aria-label="Duration or distance"
               value={amountText(b)}
               placeholder="10m / 1km"
               onCommit={(v) => {
@@ -174,24 +154,24 @@ export function StepTable({ blocks, onChange, sport, profile, speedUnit, rpe, st
             />
           </td>
           <td>
-            <Cell
-              label="Speed or pace"
+            <CommitInput
+              aria-label="Speed or pace"
               value={t.speed ? fmtSpeed(t.speed, speedUnit === 'pace') : ''}
               placeholder={speedUnit === 'pace' ? 'min/km' : 'km/h'}
               onCommit={(v) => setTargets(p, b, ['speed', 'asPace'], v ? parseTargets(v, speedUnit) : {})}
             />
           </td>
           <td>
-            <Cell
-              label="Incline"
+            <CommitInput
+              aria-label="Incline"
               value={t.incline ? fmtRange(t.incline, '%') : ''}
               placeholder="%"
               onCommit={(v) => setTargets(p, b, ['incline'], v ? parseTargets(v, speedUnit, '%') : {})}
             />
           </td>
           <td>
-            <Cell
-              label="Other targets"
+            <CommitInput
+              aria-label="Other targets"
               value={other}
               placeholder="e.g. Z3, rpe7"
               onCommit={(v) => setTargets(p, b, OTHER_KEYS, v ? parseTargets(v, speedUnit) : {})}
@@ -215,7 +195,7 @@ export function StepTable({ blocks, onChange, sport, profile, speedUnit, rpe, st
   }
 
   return (
-    <div>
+    <fieldset className="step-table" disabled={readOnly}>
       {blocks.length > 0 && (
         <table className="steps">
           <thead>
@@ -239,6 +219,6 @@ export function StepTable({ blocks, onChange, sport, profile, speedUnit, rpe, st
         <button onClick={addRepeat}>+ Repeat</button>
         <button onClick={() => onChange([...blocks, newStep('cd', 600)])}>+ Cool-down</button>
       </div>
-    </div>
+    </fieldset>
   )
 }

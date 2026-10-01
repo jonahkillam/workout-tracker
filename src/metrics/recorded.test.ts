@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS, profileOf, type Profile, type Recording, type RecordingStreams, type Sport, type Workout } from '../model/types'
 import { parseWorkout } from '../parser/parser'
 import { recordedSummary } from '../recordings/recorded'
-import { recordedTotals, sessionTotals } from './recorded'
-import { summarizeWeek } from './week'
+import { recordedAverage, recordedTotals, sessionTotals } from './recorded'
+import { summarizeWeeks } from './week'
 import { workoutTotals } from './workout'
 
 const NO_THRESHOLDS: Profile = profileOf(DEFAULT_SETTINGS)
@@ -35,8 +35,7 @@ function recording(sport: Sport, pieces: [number, number, number, number][], ext
     rawSport: sport,
     elapsed: v.length,
     laps: [],
-    streamsFrom: 'strava',
-    importedAt: 0,
+    detailsFetched: true,
     updatedAt: 0,
     ...extra,
   }
@@ -116,7 +115,7 @@ describe('sessionTotals and summarizeWeek', () => {
     sport,
     rawText: text,
     blocks: parseWorkout(text, { speedUnit: 'pace' }).blocks,
-    recording: recordingId ? { id: recordingId, linkedBy: 'auto', alignment: { method: 'offset', offset: 0 } } : undefined,
+    recording: recordingId ? { id: recordingId, linkedBy: 'auto', offset: 0 } : undefined,
     createdAt: 0,
     updatedAt: 0,
   })
@@ -130,10 +129,29 @@ describe('sessionTotals and summarizeWeek', () => {
 
   it('counts unlinked recordings as sessions', () => {
     const ride = { ...recording('ride', [[3600, 8, 180, 130]], { distance: 30000 }), id: 'ride' }
-    const s = summarizeWeek('2026-09-28', [workout('run', '40m', 'run')], NO_THRESHOLDS, [run, ride])
+    const [s] = summarizeWeeks('2026-09-28', 1, [workout('run', '40m', 'run')], NO_THRESHOLDS, [run, ride])
     expect(s.bySport.run).toMatchObject({ count: 1, distance: 7300 })
     expect(s.bySport.ride).toMatchObject({ count: 1, distance: 30000, duration: 3600 })
     expect(s.total.duration).toBe(2400 + 3600)
     expect(s.dailyLoad[1]).toBeCloseTo(s.total.load)
+  })
+})
+
+describe('recordedAverage', () => {
+  const base = { moving: 1800, distance: 6000 }
+
+  it('gives runs a pace and rides a speed over moving time', () => {
+    expect(recordedAverage(recording('run', [[10, 3, 0, 140]], base), 'kmh')).toBe('5:00/km')
+    expect(recordedAverage({ ...recording('ride', [[10, 3, 0, 140]], base), recorded: undefined }, 'pace')).toBe('12 km/h')
+  })
+
+  it('prefers average power from the histogram', () => {
+    const recorded = { moving: 20, power: { bin: 10, secs: [0, 0, 10, 10] } }
+    expect(recordedAverage({ ...recording('ride', [[10, 3, 0, 140]], base), recorded } as Recording, 'kmh')).toBe('30 W')
+  })
+
+  it('has nothing for stairs or without distance', () => {
+    expect(recordedAverage(recording('stair', [[10, 0, 0, 140]], base), 'kmh')).toBeUndefined()
+    expect(recordedAverage(recording('run', [[10, 3, 0, 140]], { moving: 1800 }), 'kmh')).toBeUndefined()
   })
 })

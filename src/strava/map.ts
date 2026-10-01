@@ -16,13 +16,10 @@ export interface StravaActivity {
   average_heartrate?: number
   max_heartrate?: number
   trainer?: boolean
-  device_name?: string
 }
 
 export interface StravaStream {
   data: number[]
-  original_size?: number
-  resolution?: string
 }
 
 /** Streams response with `key_by_type=true`. */
@@ -47,32 +44,31 @@ export function sportFromStrava(sportType: string, trainer = false): Sport {
   return 'other'
 }
 
-/** Builds a new recording, or updates `existing` with fresh summary data. */
+/**
+ * Builds a new recording, or updates `existing` with fresh summary data. Returns `existing` itself when the
+ * summary hasn't changed, so an unchanged activity isn't written (and pushed) again.
+ */
 export function recordingFromSummary(a: StravaActivity, existing?: Recording, now = Date.now()): Recording {
   const rawSport = a.sport_type ?? a.type ?? 'Workout'
-  return {
-    laps: [],
-    ...existing,
-    // Derived from the Strava id so every device syncing the same activity writes the same row.
-    id: existing?.id ?? `strava-${a.id}`,
+  const summary = {
     stravaId: a.id,
-    startTime: a.start_date,
+    // Normalised (Strava leaves out milliseconds), so it compares equal to the copy read back from the server.
+    startTime: new Date(a.start_date).toISOString(),
     // start_date_local is local wall-clock time written with a Z suffix.
     localDate: a.start_date_local.slice(0, 10),
     sport: sportFromStrava(rawSport, a.trainer),
     rawSport,
-    trainer: a.trainer,
     name: a.name,
-    device: a.device_name ?? existing?.device,
     elapsed: a.elapsed_time,
     moving: a.moving_time,
     distance: a.distance,
     elevationGain: a.total_elevation_gain,
     avgHr: a.average_heartrate,
     maxHr: a.max_heartrate,
-    importedAt: existing?.importedAt ?? now,
-    updatedAt: now,
   }
+  if (existing && (Object.keys(summary) as (keyof typeof summary)[]).every((k) => existing[k] === summary[k])) return existing
+  // The id comes from the Strava id so every device syncing the same activity writes the same row.
+  return { laps: [], ...existing, id: `strava-${a.id}`, ...summary, updatedAt: now }
 }
 
 export function streamsFromStrava(recordingId: string, s: StravaStreams): RecordingStreams | undefined {
@@ -86,8 +82,6 @@ export function streamsFromStrava(recordingId: string, s: StravaStreams): Record
     power: s.watts && Uint16Array.from(s.watts.data),
     altitude: s.altitude && Float32Array.from(s.altitude.data),
     distance: s.distance && Float32Array.from(s.distance.data),
-    resolution: s.time.resolution,
-    originalSize: s.time.original_size,
   }
 }
 

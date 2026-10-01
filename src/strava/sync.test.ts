@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { db, saveWorkout } from '../db/db'
+import { newLink } from '../recordings/match'
 import { parseWorkout } from '../parser/parser'
 import { forgetStravaToken } from './auth'
 import { syncWeek } from './sync'
@@ -70,14 +71,16 @@ describe('syncWeek', () => {
     const result = await syncWeek(WEEK, { now: NOW })
     expect(result).toEqual({ status: 'synced', activities: 2, linked: 1 })
 
-    const recs = await db.recordings.orderBy('startTime').toArray()
+    const recs = await db.recordings.toCollection().sortBy('startTime')
     expect(recs.map((r) => [r.id, r.stravaId, r.sport, r.localDate])).toEqual([
       ['strava-1', 1, 'treadmill', '2026-09-29'],
       ['strava-2', 2, 'stair', '2026-09-30'],
     ])
     expect(recs[0].laps).toEqual([{ start: 0, duration: 3000, distance: undefined }])
     expect((await db.recordingStreams.get(recs[0].id))?.hr).toEqual(Uint8Array.from([140, 141, 142]))
-    expect(recs[1].streamsFrom).toBe('strava') // 404 streams: marked so it isn't refetched
+    expect(recs[0].recorded?.moving).toBe(2)
+    // 404 streams: marked so it isn't refetched, and summarised from what Strava reported.
+    expect(recs[1]).toMatchObject({ detailsFetched: true, noStreams: true, recorded: { moving: 1800, distance: 0 } })
     expect((await db.workouts.get(w.id))?.recording).toMatchObject({ id: recs[0].id, linkedBy: 'auto' })
   })
 
@@ -90,18 +93,44 @@ describe('syncWeek', () => {
     expect(calls).toEqual(['/athlete/activities']) // streams already stored
   })
 
-  it('merges with an existing recording of the same activity and drops deleted ones', async () => {
-    await db.recordings.put({
-      id: 'fit-1', fitHash: 'abc', startTime: '2026-09-29T07:00:20Z', localDate: '2026-09-29', sport: 'run',
-      rawSport: 'running', elapsed: 3000, laps: [], importedAt: 0, updatedAt: 0, streamsFrom: 'fit',
-    })
+  it('drops activities deleted on Strava, and their links', async () => {
+    const w = await saveWorkout({ date: '2026-09-30', sport: 'stair', rawText: '30m', blocks: parseWorkout('30m').blocks })
     await syncWeek(WEEK, { now: NOW })
-    expect((await db.recordings.get('fit-1'))?.stravaId).toBe(1)
-    expect(await db.recordings.count()).toBe(2)
+    expect((await db.workouts.get(w.id))?.recording?.id).toBe('strava-2')
 
     routes['/athlete/activities'] = () => json([activity(1, '2026-09-29T07:00', 'Run', 3000)])
     await syncWeek(WEEK, { now: NOW, force: true })
-    expect(await db.recordings.where('stravaId').equals(2).count()).toBe(0)
+    expect((await db.recordings.toArray()).map((r) => r.id)).toEqual(['strava-1'])
+    expect((await db.workouts.get(w.id))?.recording).toBeUndefined()
+  })
+
+  it("doesn't rewrite recordings whose summary hasn't changed", async () => {
+    await syncWeek(WEEK, { now: NOW })
+    await db.outbox.clear()
+    await syncWeek(WEEK, { now: NOW + 60_000, force: true })
+    expect(await db.outbox.count()).toBe(0)
+  })
+
+  it("doesn't link again a recording the user unlinked", async () => {
+    const w = await saveWorkout({ date: '2026-09-29', sport: 'treadmill', rawText: '50m', blocks: parseWorkout('50m').blocks })
+    await syncWeek(WEEK, { now: NOW })
+    const linked = (await db.workouts.get(w.id))!
+    await saveWorkout({ ...linked, recording: undefined, unlinked: linked.recording!.id })
+    expect((await syncWeek(WEEK, { now: NOW, force: true })).linked).toBe(0)
+    expect((await db.workouts.get(w.id))?.recording).toBeUndefined()
+  })
+
+  it("doesn't link a recording that a workout on another day has", async () => {
+    await saveWorkout({ date: '2026-09-27', sport: 'run', rawText: '50m', blocks: parseWorkout('50m').blocks, recording: newLink('strava-1', 'manual') })
+    const w = await saveWorkout({ date: '2026-09-29', sport: 'treadmill', rawText: '50m', blocks: parseWorkout('50m').blocks })
+    expect((await syncWeek(WEEK, { now: NOW })).linked).toBe(0)
+    expect((await db.workouts.get(w.id))?.recording).toBeUndefined()
+  })
+
+  it('runs one sync per week at a time', async () => {
+    const [a, b] = await Promise.all([syncWeek(WEEK, { now: NOW }), syncWeek(WEEK, { now: NOW, force: true })])
+    expect(a).toBe(b)
+    expect(calls.filter((c) => c === '/athlete/activities')).toHaveLength(1)
   })
 
   it('gets an access token from the server once, and asks again when it is about to expire', async () => {
@@ -132,6 +161,24 @@ describe('syncWeek', () => {
     expect((await syncWeek(WEEK, { now: NOW })).status).toBe('rate-limited')
     expect(await db.stravaWeekFetch.get(WEEK)).toBeUndefined()
     expect(await db.recordings.count()).toBe(2)
+  })
+
+  it('stops both detail workers after the rate limit', async () => {
+    routes['/athlete/activities'] = () => json([1, 2, 3, 4].map((id) => activity(id, `2026-09-29T0${id}:00`, 'Run', 3000)))
+    let limited!: () => void
+    const hit = new Promise<void>((r) => (limited = r))
+    routes['/activities/1/streams'] = () => {
+      limited()
+      return new Response('{}', { status: 429 })
+    }
+    // The other worker's request is still out when the limit is hit.
+    routes['/activities/2/streams'] = async () => {
+      await hit
+      await new Promise((r) => setTimeout(r, 20))
+      return json({})
+    }
+    expect((await syncWeek(WEEK, { now: NOW })).status).toBe('rate-limited')
+    expect(calls.filter((c) => /^\/activities\/[34]\//.test(c))).toEqual([])
   })
 
   it('does nothing when not connected', async () => {

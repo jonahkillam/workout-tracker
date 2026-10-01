@@ -6,12 +6,12 @@ interface Props {
   /** Index drawn in the accent colour and value-labelled. */
   highlight?: number
   format: (v: number) => string
-  height?: number
+  height: number
   onSelect?: (index: number) => void
 }
 
 /** Single-series column chart: soft grey columns, the highlighted one dark. */
-export function Columns({ values, labels, highlight, format, height = 64, onSelect }: Props) {
+export function Columns({ values, labels, highlight, format, height, onSelect }: Props) {
   const { show, hide, tip } = useTooltip()
   const max = Math.max(...values, 0)
   const labelSpace = 14

@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { loadStravaConnection } from '../strava/auth'
 import { adoptOwner, startSync } from '../sync/engine'
 import { supabase, supabaseConfigured } from '../supabase'
-import { finishMagicLink } from './session'
+import { dropSessionIfUserGone, finishMagicLink } from './session'
 import { SignIn, SignInFrame } from './SignIn'
 
 /**
@@ -30,6 +30,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!userId) return
+    // Alongside startup rather than before it, so the app still opens at once (and offline).
+    void dropSessionIfUserGone()
     let stop: (() => void) | undefined
     let cancelled = false
     void adoptOwner(userId).then(() => {
@@ -42,6 +44,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
       stop?.()
+      // Signed out (or another user): the app waits for this user's startup again, even if they sign back in.
+      setOwner(undefined)
     }
   }, [userId])
 

@@ -145,7 +145,7 @@ function stops(moving: boolean[], t: Uint32Array): [number, number][] {
 }
 
 /** Split point of a 1-D two-cluster split (maximising between-group variance), with the two means. */
-export function twoMeans(values: number[], weights?: number[]): { split: number; lo: number; hi: number } | undefined {
+function twoMeans(values: number[], weights?: number[]): { split: number; lo: number; hi: number } | undefined {
   const idx = values.map((_, i) => i).sort((a, b) => values[a] - values[b])
   const w = (i: number) => weights?.[i] ?? 1
   let total = 0
@@ -522,7 +522,7 @@ function looksLikeWorkout(rec: Recording, pieces: Piece[], statsOf: (p: Piece) =
 }
 
 /** Detected blocks, and whether they have workout structure (reps) or are a single unstructured effort. */
-export interface Detected {
+interface Detected {
   blocks: Block[]
   structured: boolean
 }

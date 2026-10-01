@@ -73,7 +73,7 @@ Outdoor runs and rides with no workout are logged automatically when they clearl
 - **Pauses:** stops of a minute or more, whether the timer was paused or you stood still, become `pause` steps, so the plan stays lined up with the recording. In a recovery, standing still is part of the rest unless it's longer than 5 minutes.
 - **Grouping:** reps within 10 s of each other are grouped into a repeat, with a pace or power range, e.g. `10m wu @ 5:33/km, 6x800mtr/90s -r @ 3:18-3:22/km, 10m cd`.
 - **Deleting:** a generated workout you delete stays deleted.
-- **Re-detecting:** use "Detect intervals" in a workout's form, or Settings → **Reprocess logged activities** to re-run detection on every generated workout you haven't edited. Generated workouts that no longer look like a workout are removed, leaving the activity unstructured.
+- **Re-detecting:** use "Detect intervals" in a workout's form.
 
 Setup:
 1. Create an API application at <https://www.strava.com/settings/api>. Set **Authorization Callback Domain** to `localhost`. A Strava app has one callback domain, so use a second app, or change it, for a deployed domain.
@@ -92,7 +92,7 @@ The client secret and the Strava tokens never reach the browser. The code exchan
   - Zones: taken from zone, RPE, power, HR or flat-equivalent pace; otherwise from the step role.
   - Load: session RPE × minutes, or zone-weighted when there is no RPE.
   - Week summaries and the acute:chronic ratio.
-- `src/db`: Dexie schema, JSON export/import, the pre-account database (`legacy.ts`).
-- `src/auth`, `src/sync`, `supabase`: sign-in, the outbox and sync engine, streams in Storage, and the Postgres schema.
+- `src/db`: Dexie schema, JSON export/import.
+- `src/auth`, `src/sync`, `supabase`: sign-in, the outbox and sync engine, and the Postgres schema.
 - `src/strava`, `src/recordings`, `server`, `api`: Strava OAuth, weekly sync, recording ↔ workout matching, token handling.
 - `src/ui`: week table and panels, workout editor (shorthand input → zone timeline → editable step table), charts.

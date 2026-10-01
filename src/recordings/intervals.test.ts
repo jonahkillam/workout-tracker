@@ -63,7 +63,6 @@ function activity(sport: Sport, pieces: Piece[], laps?: 'pieces' | Lap[]) {
     rawSport: sport === 'ride' ? 'Ride' : 'Run',
     elapsed: now,
     laps: laps === 'pieces' ? lapList : (laps ?? []),
-    importedAt: 0,
     updatedAt: 0,
   }
   return { rec, streams }

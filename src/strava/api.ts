@@ -10,7 +10,7 @@ export class RateLimitedError extends Error {
   }
 }
 
-export class StravaApiError extends Error {
+class StravaApiError extends Error {
   readonly status: number
   constructor(status: number, message: string) {
     super(message)
@@ -18,29 +18,12 @@ export class StravaApiError extends Error {
   }
 }
 
-export interface RateUsage {
-  /** Requests used in the current 15-minute window and today. */
-  used: [number, number]
-  limit: [number, number]
-}
-
-/** Read-limit usage from the most recent response, if Strava reported it. */
-export let readUsage: RateUsage | undefined
-
-function pair(header: string | null): [number, number] | undefined {
-  const parts = header?.split(',').map(Number)
-  return parts?.length === 2 && parts.every(Number.isFinite) ? [parts[0], parts[1]] : undefined
-}
-
-export async function stravaGet<T>(path: string, params: Record<string, string | number | boolean> = {}): Promise<T> {
+async function stravaGet<T>(path: string, params: Record<string, string | number | boolean> = {}): Promise<T> {
   const token = await getAccessToken()
   const query = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]))
   const res = await fetch(`${BASE}${path}${query.size ? `?${query}` : ''}`, {
     headers: { authorization: `Bearer ${token}` },
   })
-  const used = pair(res.headers.get('x-readratelimit-usage'))
-  const limit = pair(res.headers.get('x-readratelimit-limit'))
-  if (used && limit) readUsage = { used, limit }
   if (res.status === 429) throw new RateLimitedError()
   if (!res.ok) {
     const body = await res.json().catch(() => ({}))

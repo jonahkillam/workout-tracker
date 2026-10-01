@@ -4,7 +4,7 @@ import type { Block, Profile, RecordingLink, RecordingStreams, Sport, Step } fro
 
 /** Seconds into the recording where step 1 starts. */
 export function linkOffset(link: RecordingLink | undefined): number {
-  return link?.alignment.method === 'offset' ? link.alignment.offset : 0
+  return link?.offset ?? 0
 }
 
 /** Where one step occurrence falls in the recording, in seconds from the recording start. */
@@ -31,28 +31,52 @@ export function stoppedAt(streams: RecordingStreams, sport: Sport, i: number): b
 /** A stretch of plan time, in seconds from step 1. */
 export type Span = [start: number, end: number]
 
+/** Cap on step occurrences laid out, so a huge repeat count can't stall drawing or alignment. */
+const MAX_SEGMENTS = 2000
+
+/** One step occurrence on the plan's clock, in seconds from step 1, with its stats. */
+export interface StepSegment {
+  step: Step
+  start: number
+  duration: number
+  stats: ReturnType<typeof stepStats>
+}
+
 /**
- * Places each step occurrence on the recording's clock, with step 1 starting
- * `offset` seconds in. Stops at the first step without a duration, since
- * nothing after it can be placed.
+ * Lays the step occurrences end to end from step 1. Stops at the first step
+ * without a duration, since nothing after it can be placed. The timelines, the
+ * detail chart and the recorded averages all use this, so they agree.
  */
-export function stepWindows(blocks: Block[], sport: Sport, profile: Profile, rpe: number | undefined, offset: number): StepWindow[] {
-  const out: StepWindow[] = []
-  let at = offset
-  for (const step of expand(blocks)) {
-    const duration = stepStats(step, sport, profile, rpe).duration
-    if (!duration) break
-    out.push({ step, start: at, end: at + duration })
-    at += duration
+export function stepSegments(blocks: Block[], sport: Sport, profile: Profile, rpe: number | undefined): StepSegment[] {
+  const out: StepSegment[] = []
+  let at = 0
+  for (const step of expand(blocks, MAX_SEGMENTS)) {
+    const stats = stepStats(step, sport, profile, rpe)
+    if (!stats.duration) break
+    out.push({ step, start: at, duration: stats.duration, stats })
+    at += stats.duration
   }
   return out
 }
 
+/** Places each step occurrence on the recording's clock, with step 1 starting `offset` seconds in. */
+export function stepWindows(
+  blocks: Block[],
+  sport: Sport,
+  profile: Profile,
+  rpe: number | undefined,
+  offset: number,
+): StepWindow[] {
+  return stepSegments(blocks, sport, profile, rpe).map((s) => ({
+    step: s.step,
+    start: offset + s.start,
+    end: offset + s.start + s.duration,
+  }))
+}
+
 /** Where the plan's pause steps fall on the plan's clock. */
-export function pauseSpans(blocks: Block[], sport: Sport, profile: Profile, rpe?: number): Span[] {
-  return stepWindows(blocks, sport, profile, rpe, 0)
-    .filter((w) => w.step.kind === 'pause')
-    .map((w): Span => [w.start, w.end])
+export function pauseSpans(segments: StepSegment[]): Span[] {
+  return segments.filter((s) => s.step.kind === 'pause').map((s): Span => [s.start, s.start + s.duration])
 }
 
 /** First index with `t[i] >= x`. */
@@ -83,11 +107,6 @@ function sumInWindow(t: Uint32Array, values: Values, start: number, end: number)
   return { sum, n }
 }
 
-/** Sum and count of HR samples with `start <= t < end`. Zero readings (dropouts) are skipped. */
-export function hrInWindow(streams: RecordingStreams, start: number, end: number): { sum: number; n: number } {
-  return streams.hr ? sumInWindow(streams.t, streams.hr, start, end) : { sum: 0, n: 0 }
-}
-
 /** Recorded average of `values` per step, over all of its occurrences. Steps with no readings are left out. */
 export function stepAverage(windows: StepWindow[], t: Uint32Array, values: Values): Map<Step, number> {
   const acc = new Map<Step, { sum: number; n: number }>()
@@ -99,11 +118,6 @@ export function stepAverage(windows: StepWindow[], t: Uint32Array, values: Value
   const out = new Map<Step, number>()
   for (const [step, a] of acc) if (a.n) out.set(step, a.sum / a.n)
   return out
-}
-
-/** Recorded average HR per step, over all of its occurrences. Steps with no samples are left out. */
-export function stepHr(windows: StepWindow[], streams: RecordingStreams): Map<Step, number> {
-  return streams.hr ? stepAverage(windows, streams.t, streams.hr) : new Map()
 }
 
 /**
@@ -134,18 +148,6 @@ export function bucketSeries(
     }
   }
   return Array.from(sums, (s, b) => (counts[b] ? s / counts[b] : undefined))
-}
-
-/** HR in `buckets` slices of `[from, to)` on the plan's clock; see `bucketSeries`. */
-export function hrSeries(
-  streams: RecordingStreams,
-  offset: number,
-  from: number,
-  to: number,
-  buckets = 500,
-  gaps: Span[] = [],
-): (number | undefined)[] {
-  return streams.hr ? bucketSeries(streams.t, streams.hr, offset, from, to, buckets, gaps) : Array(buckets).fill(undefined)
 }
 
 /** Recorded values at one moment, from the sample nearest in time. */

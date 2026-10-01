@@ -60,10 +60,29 @@ const UNIT_ALIASES: Record<string, Unit> = {
 }
 
 // Longest alternatives first so `km/h` wins over `km`, `mins` over `m`, etc.
+// `w` followed by a single `/` is the rest marker (`6x800 w/ 90s`), not watts.
 const UNIT_RE =
-  /\s*(km\/h|\/km|\/mi|kph|kmh|mph|mins|min|mtr|secs|sec|floors|fl|km|mi|hr|bpm|spm|h|m|s|w|%)(?![a-zA-Z])/iy
+  /\s*(km\/h|\/km|\/mi|kph|kmh|mph|mins|min|mtr|secs|sec|floors|fl|km|mi|hr|bpm|spm|h|m|s|w(?!\/(?!\/))|%)(?![a-zA-Z])/iy
 
 const NEGATIVE_GRADE_RE = /[-–](\d+(?:\.\d+)?|\.\d+)\s*%/y
+
+/** The negative low end of a grade range: `-3` in `-3--1%` or `-2-1%`. */
+const NEGATIVE_RANGE_START_RE = /[-–](\d+(?:\.\d+)?|\.\d+)(?=[-–][-–]?(?:\d+(?:\.\d+)?|\.\d+)\s*%)/y
+
+/** A further part of a compound duration: `5m` and `30s` in `1h5m30s`, or `30m` in `1h 30m`. */
+const DURATION_PART_RE = /(\s*)(\d+(?:\.\d+)?)(h|m|s)(?![a-zA-Z])/y
+
+const SECONDS = { h: 3600, m: 60, s: 1 }
+
+const SINGLE: Record<string, Token['k']> = {
+  '/': 'slash',
+  '@': 'at',
+  '(': 'lp',
+  ')': 'rp',
+  '-': 'dash',
+  '–': 'dash',
+  '×': 'x',
+}
 
 const NUMBER_RE = /(\d+:\d{2}(?::\d{2})?)|(\d+(?:\.\d+)?|\.\d+)/y
 
@@ -71,7 +90,7 @@ const PREFIXED_RE = /(z|zone|rpe|lvl|level|l)\s*(\d+(?:\.\d+)?)(?![a-zA-Z\d])/iy
 
 const WORD_RE = /[a-zA-Z]+(?:-[a-zA-Z]+)?/y
 
-export const ROLE_WORDS: Record<string, StepKind> = {
+const ROLE_WORDS: Record<string, StepKind> = {
   wu: 'wu',
   warmup: 'wu',
   'warm-up': 'wu',
@@ -108,6 +127,12 @@ function parseClock(s: string): number {
   return parts.reduce((acc, p) => acc * 60 + p, 0)
 }
 
+/** Rounds away float noise from unit conversions (`1.1m` is 66s, not 66.00000000000001s). */
+export function round(n: number, dp = 6): number {
+  const f = 10 ** dp
+  return Math.round(n * f) / f
+}
+
 function matchAt(re: RegExp, src: string, pos: number): RegExpExecArray | null {
   re.lastIndex = pos
   return re.exec(src)
@@ -139,24 +164,20 @@ export function tokenize(src: string): Token[] {
       pos += 2
       continue
     }
-    // A negative grade (`-3%`, `2%//-1%`). After a number, `-` is a range dash instead.
-    const negative = (ch === '-' || ch === '–') && tokens[tokens.length - 1]?.k !== 'q' && matchAt(NEGATIVE_GRADE_RE, src, pos)
+    // A negative grade (`-3%`, `2%//-1%`, `5:00/km -2%`, `-3--1%`). Right after a number, `-` is a range
+    // dash instead (`5-6km/h`, `2-4%`).
+    const prev = tokens[tokens.length - 1]
+    const negative =
+      (ch === '-' || ch === '–') &&
+      (prev?.k !== 'q' || prev.end < pos) &&
+      (matchAt(NEGATIVE_GRADE_RE, src, pos) ?? matchAt(NEGATIVE_RANGE_START_RE, src, pos))
     if (negative) {
       tokens.push({ k: 'q', n: -Number(negative[1]), clock: false, unit: '%', start: pos, end: pos + negative[0].length })
       pos += negative[0].length
       continue
     }
-    const single: Record<string, Token['k']> = {
-      '/': 'slash',
-      '@': 'at',
-      '(': 'lp',
-      ')': 'rp',
-      '-': 'dash',
-      '–': 'dash',
-      '×': 'x',
-    }
-    if (ch in single) {
-      tokens.push({ k: single[ch], start: pos, end: pos + 1 } as Token)
+    if (ch in SINGLE) {
+      tokens.push({ k: SINGLE[ch], start: pos, end: pos + 1 } as Token)
       pos++
       continue
     }
@@ -172,19 +193,19 @@ export function tokenize(src: string): Token[] {
       if (u && !clock) {
         unit = UNIT_ALIASES[u[1].toLowerCase()]
         pos += u[0].length
-        // Compound durations: 1h5m, 5m30s.
+        // Compound durations: 1h5m, 5m30s. A space is allowed only after hours (`1h 30m`), since `1m 30s`
+        // also reads as two steps.
         if (unit === 'h' || unit === 'min') {
-          n = n * (unit === 'h' ? 3600 : 60)
-          let more = true
-          while (more) {
-            more = false
-            const next = matchAt(/(\d+(?:\.\d+)?)(h|m|s)(?![a-zA-Z])/y, src, pos)
-            if (next) {
-              n += Number(next[1]) * { h: 3600, m: 60, s: 1 }[next[2] as 'h' | 'm' | 's']
-              pos += next[0].length
-              more = true
-            }
+          let last = unit === 'h' ? SECONDS.h : SECONDS.m
+          n *= last
+          for (let next; (next = matchAt(DURATION_PART_RE, src, pos)); ) {
+            const secs = SECONDS[next[3] as 'h' | 'm' | 's']
+            if (next[1] && (last !== SECONDS.h || secs === SECONDS.h)) break
+            n += Number(next[2]) * secs
+            last = secs
+            pos += next[0].length
           }
+          n = round(n)
           unit = 's'
         }
       } else if (u && clock && ['pkm', 'pmi'].includes(UNIT_ALIASES[u[1].toLowerCase()])) {

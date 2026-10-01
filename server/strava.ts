@@ -40,7 +40,7 @@ export interface TokenStore {
   remove(userId: string): Promise<void>
 }
 
-export interface StravaDeps {
+interface StravaDeps {
   fetch?: typeof fetch
   store?: TokenStore
   now?: () => number
@@ -57,18 +57,7 @@ function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 }
 
-/** Rejects cross-site requests: the Origin, when sent, must match the host being called. */
-function sameOrigin(req: Request): boolean {
-  const origin = req.headers.get('origin')
-  if (!origin) return true
-  try {
-    return new URL(origin).host === new URL(req.url).host
-  } catch {
-    return false
-  }
-}
-
-export function supabaseTokenStore(url: string, secretKey: string): TokenStore {
+function supabaseTokenStore(url: string, secretKey: string): TokenStore {
   const admin = createClient(url, secretKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const check = <T>({ data, error }: { data: T; error: { message: string } | null }) => {
     if (error) throw new Error(error.message)
@@ -116,7 +105,6 @@ const tokensFrom = (b: Record<string, unknown>): StravaTokens => ({
 /** Handles POST /api/strava/{exchange,token,revoke}. */
 export async function handleStrava(action: string, req: Request, env: StravaEnv, deps: StravaDeps = {}): Promise<Response> {
   if (req.method !== 'POST') return json(405, { error: 'Method not allowed' })
-  if (!sameOrigin(req)) return json(403, { error: 'Cross-origin request rejected' })
 
   const clientId = env.STRAVA_CLIENT_ID
   const clientSecret = env.STRAVA_CLIENT_SECRET
@@ -161,40 +149,55 @@ export async function handleStrava(action: string, req: Request, env: StravaEnv,
         return json(200, { athleteId: account.athlete_id, athleteName: account.athlete_name, scope: account.scope })
       }
       case 'token': {
-        const fresh = (t: StravaTokens) => t.expires_at - REFRESH_MARGIN > now() / 1000
+        const secs = now() / 1000
+        const fresh = (t: StravaTokens) => t.expires_at - REFRESH_MARGIN > secs
         const reply = (t: StravaTokens) => json(200, { access_token: t.access_token, expires_at: t.expires_at })
-        const tokens = await store.get(userId)
-        if (!tokens) return json(410, { error: 'Strava is not connected' })
+        const disconnected = () => json(410, { error: 'Strava is not connected' })
+        let tokens = await store.get(userId)
+        if (!tokens) return disconnected()
         if (fresh(tokens)) return reply(tokens)
 
+        // One refresh at a time per user, across server instances: the lease (claim_strava_refresh) goes to one
+        // caller until it saves the new tokens or 20 s pass.
         if (!(await store.claimRefresh(userId))) {
-          // Another request is refreshing; its new token will show up shortly.
-          for (let i = 0; i < 20; i++) {
+          // Someone else is refreshing. The current token will do if it has a minute left; otherwise wait for theirs.
+          for (let i = 0; tokens.expires_at - 60 <= secs; i++) {
+            if (i === 20) return json(503, { error: 'Strava token refresh is taking too long' })
             await sleep(250)
-            const latest = await store.get(userId)
-            if (!latest) return json(410, { error: 'Strava is not connected' })
-            if (fresh(latest)) return reply(latest)
+            tokens = await store.get(userId)
+            if (!tokens) return disconnected()
           }
-          return json(503, { error: 'Strava token refresh is taking too long' })
+          return reply(tokens)
         }
-        const params = { ...credentials, refresh_token: tokens.refresh_token, grant_type: 'refresh_token' }
-        const r = await postStrava(TOKEN_URL, params, fetchImpl).catch(async (e) => {
-          await store.releaseRefresh(userId)
+        try {
+          // Read again under the lease: another caller may have refreshed since the first read, which rotated the
+          // refresh token read then.
+          tokens = await store.get(userId)
+          if (!tokens) return disconnected()
+          if (fresh(tokens)) {
+            await store.releaseRefresh(userId)
+            return reply(tokens)
+          }
+          const used = tokens.refresh_token
+          const r = await postStrava(TOKEN_URL, { ...credentials, refresh_token: used, grant_type: 'refresh_token' }, fetchImpl)
+          if (!r.ok) {
+            await store.releaseRefresh(userId)
+            if (r.status !== 400 && r.status !== 401) return json(r.status, { error: `Strava refresh failed (${r.status})` })
+            // Rejected: the athlete revoked access on Strava, unless the token was rotated by someone else meanwhile
+            // (a lease that ran out). 410 tells the app to show Strava as disconnected.
+            const latest = await store.get(userId)
+            if (latest && latest.refresh_token !== used) return reply(latest)
+            await store.remove(userId)
+            return json(410, { error: 'Strava access was revoked; connect again' })
+          }
+          // Refresh tokens rotate: keep the newest one. The old one no longer works, so try the save twice.
+          const next = tokensFrom(r.body)
+          await store.save(userId, next).catch(() => store.save(userId, next))
+          return reply(next)
+        } catch (e) {
+          await store.releaseRefresh(userId).catch(() => undefined)
           throw e
-        })
-        if (!r.ok) {
-          await store.releaseRefresh(userId)
-          // 400/401: the athlete revoked access on Strava. 410 tells the app to show Strava as disconnected.
-          const revoked = r.status === 400 || r.status === 401
-          if (revoked) await store.remove(userId)
-          return json(revoked ? 410 : r.status, {
-            error: revoked ? 'Strava access was revoked; connect again' : `Strava refresh failed (${r.status})`,
-          })
         }
-        // Refresh tokens rotate: keep the newest one.
-        const next = tokensFrom(r.body)
-        await store.save(userId, next)
-        return reply(next)
       }
       case 'revoke': {
         const tokens = await store.get(userId)

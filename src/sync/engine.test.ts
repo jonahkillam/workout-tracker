@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto'
-import { beforeEach, describe, expect, it } from 'vitest'
-import { db, deleteWorkout, saveWorkout } from '../db/db'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { clearLocalData, db, deleteWorkout, saveWorkout } from '../db/db'
 import type { Workout } from '../model/types'
-import { adoptOwner, pull, push } from './engine'
+import { adoptOwner, pull, push, startSync, whenReady } from './engine'
 import { FakeRemote } from './fakeRemote'
 
 let server: FakeRemote
@@ -57,7 +57,7 @@ describe('sync engine', () => {
   it('sends deletes as tombstones, and applies pulled ones', async () => {
     await saveWorkout(workout('w1'))
     await db.recordings.put({
-      id: 'r1', startTime: '', localDate: '2026-09-29', sport: 'run', rawSport: 'Run', elapsed: 1, laps: [], importedAt: 0, updatedAt: 0,
+      id: 'r1', startTime: '', localDate: '2026-09-29', sport: 'run', rawSport: 'Run', elapsed: 1, laps: [], updatedAt: 0,
     })
     await db.recordingStreams.put({ recordingId: 'r1', t: Uint32Array.from([0]) })
     await push(server)
@@ -90,23 +90,6 @@ describe('sync engine', () => {
     expect(await db.outbox.count()).toBe(0)
   })
 
-  it('brings old-shaped documents up to date: string notes become categorised notes', async () => {
-    server.put('workouts', 'w1', { ...workout('w1'), notes: 'calf tight' }, 1)
-    server.put('workouts', 'w2', { ...workout('w2'), notes: '  ' }, 1)
-    await pull(server)
-    expect((await db.workouts.get('w1'))?.notes).toEqual([{ kind: 'general', text: 'calf tight' }])
-    expect(await db.workouts.get('w2')).not.toHaveProperty('notes')
-  })
-
-  it("replaces a local recording for the same Strava activity with the server's", async () => {
-    const rec = { startTime: '', localDate: '2026-09-29', sport: 'run' as const, rawSport: 'Run', elapsed: 1, laps: [], importedAt: 0, updatedAt: 0 }
-    await db.recordings.put({ ...rec, id: 'local-id', stravaId: 7 })
-    await db.outbox.clear()
-    server.put('recordings', 'strava-7', { ...rec, id: 'strava-7', stravaId: 7 }, 1)
-    await pull(server)
-    expect((await db.recordings.toArray()).map((r) => r.id)).toEqual(['strava-7'])
-  })
-
   it('wipes local data when a different user signs in', async () => {
     await saveWorkout(workout('w1'))
     await adoptOwner('user')
@@ -115,5 +98,31 @@ describe('sync engine', () => {
     expect(await db.workouts.count()).toBe(0)
     expect(await db.outbox.count()).toBe(0)
     expect(await db.syncMeta.get('sync')).toMatchObject({ owner: 'other', cursor: 0 })
+  })
+
+  describe('startSync', () => {
+    beforeEach(() => {
+      const events = { addEventListener: () => {}, removeEventListener: () => {} }
+      vi.stubGlobal('window', events)
+      vi.stubGlobal('document', { ...events, visibilityState: 'visible' })
+    })
+    afterEach(() => vi.unstubAllGlobals())
+
+    it('waits for the first pull again after signing out and back in', async () => {
+      server.put('workouts', 'w1', { ...workout('w1') }, 1)
+      let stop = startSync(server)
+      await whenReady()
+      expect(await db.workouts.count()).toBe(1)
+      stop()
+
+      // Sign-out wipes the device; signing back in (AuthGate) adopts the owner and restarts sync before the app
+      // mounts, so the app's whenReady() covers the new first pull.
+      await clearLocalData()
+      await adoptOwner('user')
+      stop = startSync(server)
+      await whenReady()
+      expect(await db.workouts.count()).toBe(1)
+      stop()
+    })
   })
 })

@@ -108,19 +108,17 @@ export interface Workout {
   speedUnit?: SpeedUnit
   /** The recorded activity this workout is linked to, if any. */
   recording?: RecordingLink
-  /** Written by interval detection and not edited since; reprocessing may rewrite it. */
-  generated?: boolean
+  /** A recording the user unlinked from this workout, so it isn't linked again automatically. */
+  unlinked?: string
   createdAt: number
   updatedAt: number
 }
 
-/** How a workout's planned steps line up with its recording (used for the HR overlay). */
-export type Alignment = { method: 'laps' } | { method: 'offset'; /** Seconds into the recording where step 1 starts. */ offset: number }
-
 export interface RecordingLink {
   id: string
   linkedBy: 'auto' | 'manual'
-  alignment: Alignment
+  /** Seconds into the recording where step 1 starts, lining the plan up with it (used for the HR overlay). */
+  offset: number
 }
 
 export interface Lap {
@@ -128,17 +126,17 @@ export interface Lap {
   start: number
   duration: number
   distance?: number
-  /** Index of the watch-workout step this lap belongs to (FIT only). */
-  stepIndex?: number
 }
 
-/** A recorded activity from any source (Strava now, FIT files later). */
+/** A recorded activity. Strava is the only source so far. */
 export interface Recording {
+  /** `strava-<activity id>`, so every device syncing the same activity writes the same row. */
   id: string
   stravaId?: number
-  /** SHA-1 of an imported FIT file, to avoid importing it twice. */
-  fitHash?: string
-  streamsFrom?: 'strava' | 'fit'
+  /** Streams and laps have been fetched (or found not to exist), so they aren't fetched again. */
+  detailsFetched?: boolean
+  /** Strava has no streams for it (a manual activity), so no device asks for them. */
+  noStreams?: boolean
   /** UTC ISO timestamp. */
   startTime: string
   /** Local calendar date, YYYY-MM-DD. */
@@ -146,9 +144,7 @@ export interface Recording {
   sport: Sport
   /** Sport as the source named it, e.g. Strava's `sport_type`. */
   rawSport: string
-  trainer?: boolean
   name?: string
-  device?: string
   /** Seconds. */
   elapsed: number
   moving?: number
@@ -158,15 +154,14 @@ export interface Recording {
   avgHr?: number
   maxHr?: number
   laps: Lap[]
-  /** When a workout was generated from this recording. Set once, so a deleted one isn't recreated. */
-  autoLogged?: number
-  /** When detection found no clear workout structure, so it's left as an unstructured activity. */
-  unstructured?: number
+  /** A workout was generated from this recording. Set once, so a deleted one isn't recreated. */
+  autoLogged?: boolean
+  /** Detection found no clear workout structure, so it's left as an unstructured activity. */
+  unstructured?: boolean
   /** Totals and time-in-intensity worked out from the streams, once they've arrived. */
   recorded?: RecordedSummary
   /** Thresholds in effect when the summary was worked out, for zoning it without a workout. */
   profile?: Profile
-  importedAt: number
   updatedAt: number
 }
 
@@ -205,9 +200,6 @@ export interface RecordingStreams {
   power?: Uint16Array
   altitude?: Float32Array
   distance?: Float32Array
-  /** Strava's sampling level, and the original point count, to spot downsampling. */
-  resolution?: string
-  originalSize?: number
 }
 
 /** Who this account's Strava is connected as. The tokens stay on the server (`strava_tokens`). */

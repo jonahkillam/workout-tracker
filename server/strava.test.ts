@@ -94,7 +94,7 @@ describe('handleStrava', () => {
   })
 
   it('refreshes once when requests race, and the others wait for the new token', async () => {
-    store.tokens.set('u1', { access_token: 'a', refresh_token: 'r', expires_at: NOW / 1000 + 10 })
+    store.tokens.set('u1', { access_token: 'a', refresh_token: 'r', expires_at: NOW / 1000 - 10 })
     let finish!: () => void
     const fetchImpl = vi.fn(async () => {
       await new Promise<void>((r) => (finish = r))
@@ -112,6 +112,57 @@ describe('handleStrava', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(await first.json()).toMatchObject({ access_token: 'b' })
     expect(await second.json()).toMatchObject({ access_token: 'b' })
+  })
+
+  it("doesn't wait for another refresh while the current token still works", async () => {
+    store.tokens.set('u1', { access_token: 'a', refresh_token: 'r', expires_at: NOW / 1000 + 120 })
+    store.lease = true
+    const sleep = vi.fn(async () => {})
+    const fetchImpl = upstream(200, {})
+    const res = await handleStrava('token', post('token', {}), env, { fetch: fetchImpl, store, now: () => NOW, sleep })
+    expect(await res.json()).toMatchObject({ access_token: 'a' })
+    expect(sleep).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('reads the tokens again after taking the lease, and skips the refresh if another request just did it', async () => {
+    store.tokens.set('u1', { access_token: 'a', refresh_token: 'r', expires_at: NOW / 1000 + 10 })
+    const claim = store.claimRefresh.bind(store)
+    // Another instance refreshed between this request's first read and its claim.
+    store.claimRefresh = async () => {
+      store.tokens.set('u1', { access_token: 'b', refresh_token: 'r2', expires_at: NOW / 1000 + 21600 })
+      return claim()
+    }
+    const fetchImpl = upstream(400, {})
+    const res = await call('token', {}, fetchImpl)
+    expect(await res.json()).toMatchObject({ access_token: 'b' })
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(store.lease).toBe(false)
+  })
+
+  it("doesn't disconnect on a rejected refresh when the refresh token has changed meanwhile", async () => {
+    store.tokens.set('u1', { access_token: 'a', refresh_token: 'r', expires_at: 0 })
+    const fetchImpl = vi.fn(async () => {
+      // Another instance, whose lease this one outlived, rotated the token first.
+      store.tokens.set('u1', { access_token: 'b', refresh_token: 'r2', expires_at: NOW / 1000 + 21600 })
+      return new Response('{}', { status: 400 })
+    })
+    const res = await call('token', {}, fetchImpl)
+    expect(await res.json()).toMatchObject({ access_token: 'b' })
+    expect(store.tokens.get('u1')?.refresh_token).toBe('r2')
+  })
+
+  it('retries saving the rotated tokens once', async () => {
+    store.tokens.set('u1', { access_token: 'a', refresh_token: 'r', expires_at: 0 })
+    const save = store.save.bind(store)
+    let failures = 1
+    store.save = async (...args) => {
+      if (failures-- > 0) throw new Error('database unreachable')
+      return save(...args)
+    }
+    const res = await call('token', {}, upstream(200, { access_token: 'b', refresh_token: 'r2', expires_at: NOW / 1000 + 21600 }))
+    expect(res.status).toBe(200)
+    expect(store.tokens.get('u1')?.refresh_token).toBe('r2')
   })
 
   it('reports a revoked refresh token so the app can ask to reconnect', async () => {
@@ -138,13 +189,11 @@ describe('handleStrava', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('rejects missing config, cross-origin calls, bad input and unknown actions', async () => {
+  it('rejects missing config, bad input and unknown actions', async () => {
     const fetchImpl = upstream(200, {})
     const deps = { fetch: fetchImpl, store }
     expect((await handleStrava('token', post('token', {}), {}, deps)).status).toBe(500)
     expect((await handleStrava('token', post('token', {}), env, { fetch: fetchImpl })).status).toBe(500)
-    const cross = post('exchange', { code: 'c' }, { authorization: 'Bearer jwt-u1', origin: 'https://evil.example' })
-    expect((await handleStrava('exchange', cross, env, deps)).status).toBe(403)
     expect((await call('exchange', {}, fetchImpl)).status).toBe(400)
     expect((await call('nope', {}, fetchImpl)).status).toBe(404)
     expect((await call('token', {}, fetchImpl)).status).toBe(410) // not connected

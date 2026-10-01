@@ -1,5 +1,6 @@
 // Totals from what was recorded, for sessions whose recording is a better measure than the plan.
-import type { Histogram, Profile, Recording, Sport, Workout } from '../model/types'
+import type { Histogram, Profile, Recording, SpeedUnit, Sport, Workout } from '../model/types'
+import { fmtSpeedIn } from '../parser/format'
 import { band, emptyTotals, HR_BOUNDS, loadFor, PACE_BOUNDS, POWER_BOUNDS, rpeZone, workoutTotals, type Totals } from './workout'
 
 /** Seconds per zone from a histogram, with each bin zoned by its midpoint as a fraction of `threshold`. */
@@ -57,7 +58,7 @@ export function recordedTotals(
 }
 
 /** Whether a workout's totals come from its recording: runs with recorded pace, rides with recorded power. */
-export function usesRecording(w: Pick<Workout, 'sport'>, rec: Recording | undefined): rec is Recording {
+function usesRecording(w: Pick<Workout, 'sport'>, rec: Recording | undefined): rec is Recording {
   return (w.sport === 'run' && !!rec?.recorded?.gap) || (w.sport === 'ride' && !!rec?.recorded?.power)
 }
 
@@ -72,4 +73,18 @@ export function sessionTotals(
 ): Totals {
   const planned = workoutTotals(w, fallback)
   return usesRecording(w, rec) ? recordedTotals(rec, w.sport, w.profile ?? fallback, { rpe: w.rpe, planned }) : planned
+}
+
+/** Average pace, speed or power over the recording's moving time, for an unstructured activity's subline. */
+export function recordedAverage(r: Recording, speedUnit: SpeedUnit): string | undefined {
+  const power = r.recorded?.power
+  if (power) {
+    const secs = power.secs.reduce((a, b) => a + b, 0)
+    const watts = power.secs.reduce((a, s, i) => a + (i + 0.5) * power.bin * s, 0)
+    if (secs) return `${Math.round(watts / secs)} W`
+  }
+  const moving = r.moving ?? r.recorded?.moving
+  if (r.sport === 'stair' || !r.distance || !moving) return undefined
+  const kmh = (r.distance / moving) * 3.6
+  return fmtSpeedIn(kmh, r.sport === 'run' ? 'pace' : r.sport === 'ride' ? 'kmh' : speedUnit)
 }

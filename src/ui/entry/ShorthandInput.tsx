@@ -1,6 +1,7 @@
 import { useRef, type ReactNode } from 'react'
 import type { SpeedUnit } from '../../model/types'
 import type { Diagnostic, Highlight } from '../../parser/parser'
+import { SpeedUnitToggle } from '../common/SpeedUnitToggle'
 
 interface Props {
   value: string
@@ -39,13 +40,7 @@ export function ShorthandInput({ value, onChange, highlights, diagnostics, speed
     <div>
       <div className="shorthand-bar">
         <label htmlFor="shorthand">Workout</label>
-        <span className="segmented" role="group" aria-label="Speed unit">
-          {(['kmh', 'pace'] as const).map((u) => (
-            <button key={u} type="button" aria-pressed={speedUnit === u} onClick={() => onSpeedUnit(u)}>
-              {u === 'kmh' ? 'km/h' : 'min/km'}
-            </button>
-          ))}
-        </span>
+        <SpeedUnitToggle value={speedUnit} onChange={onSpeedUnit} />
       </div>
       <div className="shorthand">
         <div className="mirror" ref={mirror} aria-hidden>

@@ -3,14 +3,6 @@ import type { Block, SpeedUnit, Step } from './types'
 /** Index path into a block tree: [2, 0] is the first child of the third block. */
 export type Path = number[]
 
-export function getAt(blocks: Block[], path: Path): Block {
-  const [i, ...rest] = path
-  const b = blocks[i]
-  if (!rest.length) return b
-  if (b.type !== 'repeat') throw new Error('Path descends into a step')
-  return getAt(b.children, rest)
-}
-
 function mapList(blocks: Block[], path: Path, fn: (list: Block[], index: number) => Block[]): Block[] {
   const [i, ...rest] = path
   if (!rest.length) return fn(blocks, i)
@@ -67,9 +59,12 @@ export function expand(blocks: Block[], limit = 50_000): Step[] {
         if (!(tail && b.kind !== 'work')) out.push(b)
         return
       }
-      for (let n = 0; n < b.count; n++) {
+      for (let n = 0; n < b.count && out.length < limit; n++) {
         const final = n === b.count - 1
+        const before = out.length
         visitList(b.children, final && (tail || !!b.skipLastRest))
+        // A body that yields nothing yields nothing every time: skip to the last repetition.
+        if (out.length === before && !final) n = Math.max(n, b.count - 2)
       }
     })
   }

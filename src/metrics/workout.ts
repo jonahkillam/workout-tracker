@@ -21,7 +21,7 @@ export interface Totals {
   unknownDuration: number
 }
 
-export interface StepStats {
+interface StepStats {
   duration?: number
   distance?: number
   vertical: number
@@ -32,7 +32,7 @@ export interface StepStats {
 }
 
 /** Metabolic cost of running on a grade, J/kg/m (Minetti et al. 2002). */
-export function minettiCost(grade: number): number {
+function minettiCost(grade: number): number {
   const g = Math.max(-0.45, Math.min(0.45, grade))
   return 155.4 * g ** 5 - 30.4 * g ** 4 - 43.3 * g ** 3 + 46.3 * g ** 2 + 19.5 * g + 3.6
 }
@@ -69,7 +69,7 @@ export function stairClimbRate(stepRate: number, stepHeight: number): number {
 }
 
 /** Grade a stair climber is treated as for GAP: the steepest grade the Minetti model covers. */
-export const STAIR_GRADE = 0.45
+const STAIR_GRADE = 0.45
 
 /** Grade-adjusted speed for climbing `metresPerHour` on a stair climber, km/h, treated as running up a 45% grade. */
 export function stairGap(metresPerHour: number): number {
@@ -82,7 +82,7 @@ export function averageGap(t: Totals): number | undefined {
 }
 
 /** Vertical rise for a distance travelled along a slope of `grade` (rise/run). */
-export function verticalGain(distance: number, grade: number): number {
+function verticalGain(distance: number, grade: number): number {
   return grade > 0 ? (distance * grade) / Math.sqrt(1 + grade * grade) : 0
 }
 
@@ -103,15 +103,21 @@ export const PACE_BOUNDS = [0.78, 0.88, 0.95, 1.02]
 
 export const RUNNING: Sport[] = ['run', 'treadmill']
 
+/** A step's duration in seconds: as written, or from its distance and speed. */
+export function stepDuration(step: Step): number | undefined {
+  const speed = mid(step.targets.speed)
+  if (step.duration === undefined && step.distance !== undefined && speed) return step.distance / (speed / 3.6)
+  return step.duration
+}
+
 /** Stats for a single occurrence of a step. */
 export function stepStats(step: Step, sport: Sport, profile: Profile, workoutRpe?: number): StepStats {
   const t = step.targets
   const speed = mid(t.speed)
   const grade = (mid(t.incline) ?? 0) / 100
 
-  let duration = step.duration
+  const duration = stepDuration(step)
   let distance = step.distance
-  if (duration === undefined && distance !== undefined && speed) duration = distance / (speed / 3.6)
   if (distance === undefined && duration !== undefined && speed) distance = (speed / 3.6) * duration
 
   let vertical = 0
@@ -131,9 +137,10 @@ export function stepStats(step: Step, sport: Sport, profile: Profile, workoutRpe
 }
 
 /** Intensity zone 1-5, from the most specific information available. */
-export function stepZone(step: Step, sport: Sport, profile: Profile, workoutRpe?: number): number {
+function stepZone(step: Step, sport: Sport, profile: Profile, workoutRpe?: number): number {
   const t = step.targets
-  if (t.zone) return Math.round(mid(t.zone)!)
+  // The parser warns about zones outside 1-5; count them as the nearest zone.
+  if (t.zone) return Math.min(5, Math.max(1, Math.round(mid(t.zone)!)))
   if (t.rpe !== undefined) return rpeZone(t.rpe)
   if (t.power && profile.ftp) return band(mid(t.power)! / profile.ftp, POWER_BOUNDS)
   if (t.hr && profile.lthr) return band(mid(t.hr)! / profile.lthr, HR_BOUNDS)
@@ -174,17 +181,7 @@ export function workoutTotals(
   fallback: Profile,
 ): Totals {
   const profile = w.profile ?? fallback
-  const totals: Totals = {
-    duration: 0,
-    distance: 0,
-    vertical: 0,
-    flatDistance: 0,
-    gapDistance: 0,
-    gapTime: 0,
-    zoneTime: [0, 0, 0, 0, 0],
-    load: 0,
-    unknownDuration: 0,
-  }
+  const totals = emptyTotals()
   const unknown = new Set<Step>()
   const cache = new Map<Step, StepStats>()
   for (const step of expand(w.blocks)) {

@@ -6,7 +6,7 @@ import { PAUSE, STOP_SPEED, stepWindows, type StepWindow } from './align'
 /** Distance, in metres, that outdoor grade is measured over, centred on each sample. */
 const GRADE_WINDOW = 30
 /** GAP within this fraction of actual pace over the whole activity counts as flat. */
-export const FLAT_WITHIN = 0.05
+const FLAT_WITHIN = 0.05
 
 export type EffortKind = 'gap' | 'pace' | 'power'
 

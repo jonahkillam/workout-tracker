@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Block, Step } from '../model/types'
 import { expand, withSpeedUnit } from '../model/tree'
+import { fmtPace } from './format'
 import { parseWorkout } from './parser'
 import { serializeBlocks } from './serialize'
 
@@ -96,6 +97,72 @@ describe('parseWorkout', () => {
     expect(r.diagnostics).toMatchObject([{ severity: 'warning' }])
   })
 
+  it('reads a spaced negative grade after a target as a grade, not a range', () => {
+    expect(parseOk('20m @ 5:00/km -2%')).toEqual([
+      step({ duration: 1200, targets: { speed: { min: 12, max: 12 }, asPace: true, incline: { min: -2, max: -2 } } }),
+    ])
+    expect(parseOk('10m 8.5km/h -3%')).toEqual([
+      step({ duration: 600, targets: { speed: { min: 8.5, max: 8.5 }, incline: { min: -3, max: -3 } } }),
+    ])
+    // Right after a number, `-` is still a range.
+    expect(parseOk('10m @ 5-6km/h')).toEqual([step({ duration: 600, targets: { speed: { min: 5, max: 6 } } })])
+    expect(parseOk('10m @ 2-4%')).toEqual([step({ duration: 600, targets: { incline: { min: 2, max: 4 } } })])
+  })
+
+  it('parses grade ranges with a negative low end', () => {
+    expect(parseOk('10m @ -3--1%')).toEqual([step({ duration: 600, targets: { incline: { min: -3, max: -1 } } })])
+    expect(parseOk('10m @ -2-1%')).toEqual([step({ duration: 600, targets: { incline: { min: -2, max: 1 } } })])
+    expect(parseOk('4x1m/1m @ 5%//-3--1%')[0]).toMatchObject({
+      children: [{ targets: { incline: { min: 5, max: 5 } } }, { targets: { incline: { min: -3, max: -1 } } }],
+    })
+  })
+
+  it('warns about zones outside 1-5', () => {
+    for (const src of ['10m @ Z6', '10m @ Z0', '10m @ Z4-7']) {
+      expect(parseWorkout(src).diagnostics).toMatchObject([{ severity: 'warning', message: 'Zones go from Z1 to Z5' }])
+    }
+    expect(parseWorkout('10m @ Z1-5').diagnostics).toEqual([])
+  })
+
+  it('honours role words written after the targets', () => {
+    expect(parseOk('10m @ 8km/h wu')).toEqual([step({ kind: 'wu', duration: 600, targets: { speed: { min: 8, max: 8 } } })])
+    expect(parseOk('5m 6km/h easy 15%')).toEqual([
+      step({ duration: 300, targets: { speed: { min: 6, max: 6 }, incline: { min: 15, max: 15 } } }),
+    ])
+    // Inside a repeat, an explicit `easy` keeps the last step steady rather than rest.
+    const [r] = parseOk('3x(1m @ 10km/h, 5m 6km/h easy 15%)') as [Extract<Block, { type: 'repeat' }>]
+    expect((r.children as Step[]).map((c) => c.kind)).toEqual(['work', 'steady'])
+    expect(parseOk('3x10m @ Z2 easy')[0]).toMatchObject({ children: [{ kind: 'steady' }] })
+    // Right before a step, the role word belongs to that step.
+    expect(parseOk('10m @ 6km/h cd 5m').map((b) => (b as Step).kind)).toEqual(['steady', 'cd'])
+  })
+
+  it('rejects repeat counts that are 0 or not whole', () => {
+    expect(parseWorkout('0x5m').diagnostics).toMatchObject([{ severity: 'error', start: 0, end: 1 }])
+    expect(parseWorkout('2.5x1m').diagnostics).toMatchObject([
+      { severity: 'error', message: 'Repeat count must be a whole number' },
+    ])
+    expect(parseWorkout('3x2x1m').diagnostics).toEqual([])
+  })
+
+  it('reads "1h 30m" as one duration', () => {
+    expect(parseOk('1h 30m @ Z2')).toEqual([step({ duration: 5400, targets: { zone: { min: 2, max: 2 } } })])
+    expect(parseOk('1h 30m 20s')).toEqual([step({ duration: 5400 }), step({ duration: 20 })])
+    // Without hours, a space still separates steps.
+    expect(parseOk('4x(1m 30s)')[0]).toMatchObject({ children: [{ duration: 60 }, { duration: 30 }] })
+    expect(parseOk('20m 5m')).toHaveLength(2)
+  })
+
+  it('does not read the "w" of "w/" as watts', () => {
+    const [r] = parseWorkout('6x800 w/ 90s').blocks as [Extract<Block, { type: 'repeat' }>]
+    expect(r.children).toEqual([step({ kind: 'work', distance: 800 }), step({ kind: 'rest', duration: 90 })])
+    const [p] = parseOk('4x1m/1m @ 250w//150w') as [Extract<Block, { type: 'repeat' }>]
+    expect((p.children as Step[]).map((c) => c.targets.power)).toEqual([
+      { min: 250, max: 250 },
+      { min: 150, max: 150 },
+    ])
+  })
+
   it('reports unrecognised text with its position', () => {
     const r = parseWorkout('10m wu, banana, 5m cd')
     expect(r.blocks).toHaveLength(2)
@@ -135,6 +202,8 @@ describe('dropping the final rest', () => {
     expect(total(both)).toBe(65 * 60 - 300 - 3 * 20) // plus the last 20s of each set
     const steps = expand(parseOk(outer))
     expect(steps[steps.length - 2]).toMatchObject({ kind: 'rest', duration: 20 })
+    // `easy` after the targets makes the set recovery steady, and -r still drops the last one.
+    expect(steps.filter((st) => st.duration === 300).map((st) => st.kind)).toEqual(['steady', 'steady'])
     for (const src of [outer, both]) expect(parseOk(serializeBlocks(parseOk(src)))).toEqual(parseOk(src))
   })
 
@@ -221,6 +290,13 @@ describe('serializeBlocks', () => {
     '10m @ 2-4%',
     '4x3m/2m @ 2.5%//-1%, 4:00/km',
     '2x800mtr/90s -r @ 3:20/km, 10m pause, 800mtr work @ 3:20/km',
+    '20m @ -2%, 5:00/km',
+    '10m @ -3--1%',
+    '4x3m/2m @ 5%//-2-1%',
+    '3x(1m work @ 10km/h, 5m easy @ 15%, 6km/h)',
+    '1h30m @ Z2',
+    '6x800mtr/90s @ 250w//150w',
+    '10m @ Z6',
   ]
   for (const src of cases) {
     it(`round-trips "${src}"`, () => {
@@ -231,6 +307,42 @@ describe('serializeBlocks', () => {
     })
   }
 
+  // Values the display formatters round, which the serializer must keep exactly.
+  const exactCases: [string, string][] = [
+    ['1mi @ 6mph', '1.609344km @ 9.656064km/h'],
+    ['2x1mi/400mtr @ 8:00/mi', '2x1.609344km/400mtr @ 4.9709695/km'],
+    ['20m @ 5:00-5:10/mi', '20m @ 3.106856-3.2104178/km'],
+    ['40.5s @ Z4', '40.5s @ Z4'],
+    ['3x40.5/20.25', '3x40.5/20.25'],
+    ['1.1m', '66s'],
+    ['130.25s', '130.25s'],
+    ['10m @ 8.333km/h', '10m @ 8.333km/h'],
+    ['10m @ 8.1234567km/h, 2.345%', '10m @ 2.345%, 8.1234567km/h'],
+    ['10m @ rpe6.25', '10m @ rpe6.25'],
+    ['100.5fl', '100.5fl'],
+    ['1234.5678901mtr', '1234.5678901mtr'],
+    ['1.2345km', '1.2345km'],
+    ['10m @ 4.5/km', '10m @ 4:30/km'],
+    ['10m @ 4.51/km', '10m @ 4.51/km'],
+    ['10m @ 0km/h', '10m @ 0km/h'],
+  ]
+  for (const [src, expected] of exactCases) {
+    it(`keeps "${src}" exact`, () => {
+      const blocks = parseOk(src)
+      const text = serializeBlocks(blocks)
+      expect(text).toBe(expected)
+      expect(parseOk(text)).toEqual(blocks)
+    })
+  }
+
+  it('keeps speeds exact when switching to pace', () => {
+    const blocks = parseOk('10m @ 8.333km/h, 20m @ 6mph, 5m @ 0km/h')
+    const paced = withSpeedUnit(blocks, 'pace')
+    expect(serializeBlocks(paced)).toBe('10m @ 7.200288/km, 20m @ 6.213712/km, 5m @ 0km/h')
+    const back = parseOk(serializeBlocks(paced)) as Step[]
+    expect(back.map((s) => s.targets.speed)).toEqual((blocks as Step[]).map((s) => s.targets.speed))
+  })
+
   it('writes an untargeted rest as a set rest', () => {
     const blocks = parseOk('3x(40s work @ 15%, 20s rec)')
     expect(serializeBlocks(blocks)).toBe('3x40s r20s @ 15%')
@@ -240,5 +352,20 @@ describe('serializeBlocks', () => {
   it('falls back to explicit steps when targets cannot be written as a pair', () => {
     const src = '3x(40s work @ 15%, 20s rec @ 15%, 6km/h)'
     expect(serializeBlocks(parseOk(src))).toBe(src)
+  })
+})
+
+describe('expand', () => {
+  it('stops at the limit inside a repeat, and skips repeats that yield nothing', () => {
+    expect(expand(parseOk('1000000000x1m'), 100)).toHaveLength(100)
+    expect(expand(parseOk('1000000000x(1000000000x()), 5m'))).toEqual([step({ duration: 300 })])
+  })
+})
+
+describe('fmtPace', () => {
+  it('guards a zero or infinite speed', () => {
+    expect(fmtPace(0)).toBe('–')
+    expect(fmtPace(Infinity)).toBe('–')
+    expect(fmtPace(12)).toBe('5:00')
   })
 })

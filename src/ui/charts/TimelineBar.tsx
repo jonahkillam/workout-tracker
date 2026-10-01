@@ -1,9 +1,7 @@
-import { expand } from '../../model/tree'
 import type { Block, Profile, RecordingStreams, SpeedUnit, Sport, Step } from '../../model/types'
 import { KIND_LABEL } from '../../model/types'
-import { stepStats } from '../../metrics/workout'
 import { fmtDistance, fmtDuration, fmtRange, fmtSpeed, mid } from '../../parser/format'
-import { bucketSeries, hrSeries } from '../../recordings/align'
+import { bucketSeries, pauseSpans, stepSegments, type StepSegment } from '../../recordings/align'
 import { effortMax, type Effort } from '../../recordings/derived'
 import { linePath } from './linePath'
 import { useTooltip } from './Tooltip'
@@ -18,7 +16,7 @@ interface Props {
   /** Compact mode for the week table: no incline track, caption or tooltips. */
   mini?: boolean
   /** Recorded HR to draw over the plan, with step 1 starting `offset` seconds into the recording. */
-  hr?: { streams: RecordingStreams; offset: number }
+  recording?: { streams: RecordingStreams; offset: number }
   /** Recorded average HR per step, for the tooltip. */
   stepHr?: Map<Step, number>
   /** GAP, pace or power from the same recording, drawn as a grey line on a zero-based scale. */
@@ -41,17 +39,14 @@ export function TimelineBar({
   rpe,
   height = 48,
   mini = false,
-  hr,
+  recording,
   stepHr,
   effort,
 }: Props) {
   const { show, hide, tip } = useTooltip()
-  const segments = expand(blocks, 2000)
-    .map((step) => ({ step, stats: stepStats(step, sport, profile, rpe) }))
-    .filter((s) => s.stats.duration)
-  const total = segments.reduce((sum, s) => sum + s.stats.duration!, 0)
+  const segments = stepSegments(blocks, sport, profile, rpe)
+  const total = segments.reduce((sum, s) => sum + s.duration, 0)
   // If the recording ran past the plan, widen the axis so its tail still shows. With no plan, it's just the recording.
-  const recording = hr
   const lastT = recording?.streams.t.length ? recording.streams.t[recording.streams.t.length - 1] - recording.offset : 0
   const domain = Math.max(total, lastT)
   if (!domain) return mini ? null : <div className="empty">No timed steps yet.</div>
@@ -59,18 +54,17 @@ export function TimelineBar({
   const width = 1000
   // Many short segments: drop the gap so thin ones don't vanish.
   const gap = segments.length > 80 ? 0 : 2
-  const offsets: number[] = []
-  segments.reduce((x, s) => (offsets.push(x), x + (s.stats.duration! / domain) * width), 0)
+  const px = (secs: number) => (secs / domain) * width
   const zoneHeight = (zone: number) => (height * (zone + 1)) / 6
   const maxIncline = Math.max(0, ...segments.map((s) => mid(s.step.targets.incline) ?? 0))
   const inclineTrack = !mini && maxIncline > 0 ? 14 : 0
 
-  const tooltip = (s: (typeof segments)[number]) => (
+  const tooltip = (s: StepSegment) => (
     <div>
       <strong>{KIND_LABEL[s.step.kind]}</strong>
       {s.step.kind !== 'pause' && ` · Z${s.stats.zone}`}
       <div>
-        {fmtDuration(s.stats.duration!)}
+        {fmtDuration(s.duration)}
         {s.stats.distance ? ` · ${fmtDistance(Math.round(s.stats.distance))}` : ''}
       </div>
       {s.step.targets.speed && <div>{fmtSpeed(s.step.targets.speed, speedUnit === 'pace')}</div>}
@@ -81,14 +75,10 @@ export function TimelineBar({
   )
 
   // Pause steps are gaps: no bar, and the HR line breaks.
-  const pauses = segments.flatMap((s, i): [number, number][] => {
-    if (s.step.kind !== 'pause') return []
-    const start = (offsets[i] / width) * domain
-    return [[start, start + s.stats.duration!]]
-  })
+  const pauses = pauseSpans(segments)
   const hrLine =
     recording?.streams.hr &&
-    hrPath(hrSeries(recording.streams, recording.offset, 0, domain, 500, pauses), domain, width, height)
+    hrPath(bucketSeries(recording.streams.t, recording.streams.hr, recording.offset, 0, domain, 500, pauses), domain, width, height)
   const effortSeries = recording && effort && bucketSeries(recording.streams.t, effort.values, recording.offset, 0, domain, 500, pauses)
   const eMax = effortSeries ? effortMax(effortSeries) : 1
   const effortLine =
@@ -107,7 +97,8 @@ export function TimelineBar({
         onMouseLeave={hide}
       >
         {segments.map((s, i) => {
-          const w = (s.stats.duration! / domain) * width
+          const x = px(s.start)
+          const w = px(s.duration)
           const h = zoneHeight(s.stats.zone)
           const incline = mid(s.step.targets.incline) ?? 0
           const ih = maxIncline ? ((inclineTrack - 4) * incline) / maxIncline : 0
@@ -115,7 +106,7 @@ export function TimelineBar({
             <g key={i} onMouseMove={mini ? undefined : (e) => show(e, tooltip(s))}>
               {s.step.kind !== 'pause' && (
                 <rect
-                  x={offsets[i] + gap / 2}
+                  x={x + gap / 2}
                   y={height - h}
                   width={Math.max(0.5, w - gap)}
                   height={h}
@@ -124,7 +115,7 @@ export function TimelineBar({
               )}
               {inclineTrack > 0 && ih > 0 && (
                 <rect
-                  x={offsets[i] + gap / 2}
+                  x={x + gap / 2}
                   y={height + inclineTrack - ih}
                   width={Math.max(0.5, w - gap)}
                   height={ih}
@@ -132,7 +123,7 @@ export function TimelineBar({
                 />
               )}
               {/* Full-height hit target so short segments are easy to hover. */}
-              {!mini && <rect x={offsets[i]} y={0} width={w} height={height + inclineTrack} fill="transparent" />}
+              {!mini && <rect x={x} y={0} width={w} height={height + inclineTrack} fill="transparent" />}
             </g>
           )
         })}

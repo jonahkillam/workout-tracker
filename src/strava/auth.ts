@@ -10,7 +10,7 @@ export const CALLBACK_PATH = '/strava/callback'
 /** Ask for a new access token when this one has less than this long left, in seconds. */
 const REFRESH_MARGIN = 300
 
-export class NotConnectedError extends Error {
+class NotConnectedError extends Error {
   constructor() {
     super('Strava is not connected')
   }

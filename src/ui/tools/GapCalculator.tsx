@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { climbRate, gradeAdjustedSpeed, speedForGap, stairClimbRate, stairGap } from '../../metrics/workout'
 import type { Settings, SpeedUnit } from '../../model/types'
 import { fmtSpeedIn, num, parsePaceInput } from '../../parser/format'
+import { Modal } from '../common/Modal'
+import { SpeedUnitToggle } from '../common/SpeedUnitToggle'
 
 interface Props {
   settings: Settings
@@ -47,49 +49,48 @@ export function GapCalculator({ settings, onClose }: Props) {
   const grade = Number(inclineText) / 100
   const validGrade = inclineText.trim() !== '' && Number.isFinite(grade) && Math.abs(grade) <= 0.45
 
+  // The rate field means steps per minute one way and metres per hour the other, so a flip clears it.
+  const switchDirection = (d: Direction) => {
+    if (d !== direction) setRateText('')
+    setDirection(d)
+  }
+
   const switchMachine = (m: Machine) => {
     setMachine(m)
-    setDirection('forward')
+    switchDirection('forward')
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div
-        className="modal narrow calc"
-        role="dialog"
-        aria-label="GAP calculator"
-        onKeyDown={(e) => e.key === 'Escape' && onClose()}
-      >
-        <header className="modal-head">
-          <h2>GAP calculator</h2>
-          <span className="spacer" />
-          <span className="segmented" role="group" aria-label="Machine">
-            <button aria-pressed={machine === 'treadmill'} onClick={() => switchMachine('treadmill')}>
-              Treadmill
-            </button>
-            <button aria-pressed={machine === 'stair'} onClick={() => switchMachine('stair')}>
-              Stair climber
-            </button>
-          </span>
-        </header>
+    <Modal label="GAP calculator" className="narrow calc" onClose={onClose}>
+      <header className="modal-head">
+        <h2>GAP calculator</h2>
+        <span className="spacer" />
+        <span className="segmented" role="group" aria-label="Machine">
+          <button aria-pressed={machine === 'treadmill'} onClick={() => switchMachine('treadmill')}>
+            Treadmill
+          </button>
+          <button aria-pressed={machine === 'stair'} onClick={() => switchMachine('stair')}>
+            Stair climber
+          </button>
+        </span>
+      </header>
 
-        {machine === 'treadmill' ? treadmill() : stair()}
+      {machine === 'treadmill' ? treadmill() : stair()}
 
-        <footer className="modal-actions">
-          <span className="spacer" />
-          <button onClick={onClose}>Close</button>
-        </footer>
-      </div>
-    </div>
+      <footer className="modal-actions">
+        <span className="spacer" />
+        <button onClick={onClose}>Close</button>
+      </footer>
+    </Modal>
   )
 
   function directionToggle(forward: string, inverse: string) {
     return (
       <span className="segmented" role="group" aria-label="Direction">
-        <button aria-pressed={direction === 'forward'} onClick={() => setDirection('forward')}>
+        <button aria-pressed={direction === 'forward'} onClick={() => switchDirection('forward')}>
           {forward}
         </button>
-        <button aria-pressed={direction === 'inverse'} onClick={() => setDirection('inverse')}>
+        <button aria-pressed={direction === 'inverse'} onClick={() => switchDirection('inverse')}>
           {inverse}
         </button>
       </span>
@@ -108,13 +109,7 @@ export function GapCalculator({ settings, onClose }: Props) {
       <>
         <div className="calc-controls">
           {directionToggle('Incline → flat', 'Flat → incline')}
-          <span className="segmented" role="group" aria-label="Unit">
-            {(['kmh', 'pace'] as const).map((u) => (
-              <button key={u} aria-pressed={unit === u} onClick={() => setUnit(u)}>
-                {u === 'kmh' ? 'km/h' : 'min/km'}
-              </button>
-            ))}
-          </span>
+          <SpeedUnitToggle value={unit} onChange={setUnit} />
         </div>
 
         <div className="calc-fields">

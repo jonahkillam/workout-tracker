@@ -1,18 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type { Profile, RecordingStreams, Step } from '../model/types'
 import { parseWorkout } from '../parser/parser'
-import { bucketSeries, hrInWindow, hrSeries, sampleAt, stepHr, stepWindows } from './align'
+import { bucketSeries, pauseSpans, sampleAt, stepAverage, stepSegments, stepWindows } from './align'
 
 const profile: Profile = { stairStepHeight: 0.2, stairFloorHeight: 3 }
 const blocks = (text: string) => parseWorkout(text).blocks
 const windows = (text: string, offset = 0) => stepWindows(blocks(text), 'run', profile, undefined, offset)
 
 /** One sample per second at `hrAt(t)`, for times in `ts`. */
-const streams = (ts: number[], hrAt: (t: number) => number): RecordingStreams => ({
+const streams = (ts: number[], hrAt: (t: number) => number) => ({
   recordingId: 'r',
   t: Uint32Array.from(ts),
   hr: Uint8Array.from(ts.map(hrAt)),
-})
+}) satisfies RecordingStreams
+const stepHr = (w: ReturnType<typeof windows>, s: ReturnType<typeof streams>) => stepAverage(w, s.t, s.hr)
+const hrSeries = (s: ReturnType<typeof streams>, offset: number, from: number, to: number, buckets: number, gaps?: [number, number][]) =>
+  bucketSeries(s.t, s.hr, offset, from, to, buckets, gaps)
 const range = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => from + i)
 
 describe('stepWindows', () => {
@@ -32,20 +35,40 @@ describe('stepWindows', () => {
   })
 })
 
-describe('hrInWindow', () => {
-  it('searches by time across a pause', () => {
-    // Paused from 100 s to 200 s: no samples there.
-    const s = streams([...range(0, 100), ...range(200, 300)], (t) => (t < 100 ? 120 : 160))
-    expect(hrInWindow(s, 150, 250)).toEqual({ sum: 160 * 50, n: 50 })
-    expect(hrInWindow(s, 100, 200).n).toBe(0)
+describe('stepSegments', () => {
+  const segments = (text: string) => stepSegments(blocks(text), 'run', profile, undefined)
+
+  it('lays steps end to end from step 1, with their stats', () => {
+    const s = segments('10m wu, 2x3m/2m -r')
+    expect(s.map((x) => [x.start, x.duration])).toEqual([
+      [0, 600],
+      [600, 180],
+      [780, 120],
+      [900, 180],
+    ])
+    expect(s[0].stats.duration).toBe(600)
   })
 
-  it('handles missing HR', () => {
-    expect(hrInWindow({ recordingId: 'r', t: Uint32Array.from([0, 1]) }, 0, 2)).toEqual({ sum: 0, n: 0 })
+  it('stops at a step without a duration, like stepWindows', () => {
+    expect(segments('5m, 1km, 5m')).toHaveLength(1)
+    expect(windows('5m, 1km, 5m', 30)).toEqual(segments('5m, 1km, 5m').map((x) => ({ step: x.step, start: 30, end: 330 })))
+  })
+
+  it('finds pause spans', () => {
+    expect(pauseSpans(segments('5m, 2m pause, 5m'))).toEqual([[300, 420]])
   })
 })
 
-describe('stepHr', () => {
+describe('stepAverage', () => {
+  it('searches by time across a pause, and skips dropouts', () => {
+    // Paused from 100 s to 200 s: no samples there.
+    const s = streams([...range(0, 100), ...range(200, 300)], (t) => (t < 100 ? 120 : t < 210 ? 0 : 160))
+    const w = windows('10s, 100s, 100s')
+    const avg = stepAverage([{ ...w[0], start: 100, end: 200 }, { ...w[1], start: 150, end: 250 }], s.t, s.hr)
+    expect(avg.get(w[0].step)).toBeUndefined()
+    expect(avg.get(w[1].step)).toBe(160)
+  })
+
   it('averages a repeated step over all its occurrences', () => {
     const b = blocks('2x60/60')
     const [work, rest] = (b[0] as { children: Step[] }).children
@@ -64,7 +87,7 @@ describe('stepHr', () => {
   })
 })
 
-describe('hrSeries', () => {
+describe('bucketSeries', () => {
   it('buckets samples on the plan clock and breaks at pauses', () => {
     const s = streams([...range(0, 100), ...range(200, 300)], () => 130)
     const series = hrSeries(s, 0, 0, 300, 3)

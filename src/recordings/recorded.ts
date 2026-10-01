@@ -5,9 +5,9 @@ import { stoppedAt } from './align'
 import { gapStream, gradeStream } from './derived'
 
 /** Histogram bin widths: km/h of GAP, watts, bpm. */
-export const GAP_BIN = 0.1
-export const POWER_BIN = 5
-export const HR_BIN = 1
+const GAP_BIN = 0.1
+const POWER_BIN = 5
+const HR_BIN = 1
 /** Power is averaged over this many seconds before binning, so single pedal strokes don't set the zone. */
 const POWER_WINDOW = 30
 
@@ -59,19 +59,27 @@ export function recordedSummary(rec: Recording, streams: RecordingStreams): Reco
   return out
 }
 
+/** The summary for a recording without streams (e.g. a manual activity): what the source reported. */
+export function reportedSummary(rec: Recording): RecordedSummary {
+  return { moving: rec.moving ?? rec.elapsed, distance: rec.distance ?? 0 }
+}
+
 /**
- * Works out the summary for recordings whose details have arrived but that
- * don't have one yet, snapshotting the current thresholds with it.
+ * Works out the summary for recordings whose streams are on this device but
+ * that don't have one yet, snapshotting the current thresholds with it.
+ * Recordings without streams get theirs when their details are fetched.
  */
 export async function fillRecordedSummaries(recordings: Recording[]): Promise<number> {
-  const todo = recordings.filter((r) => r.streamsFrom && !r.recorded)
+  const todo = recordings.filter((r) => r.detailsFetched && !r.recorded)
   if (!todo.length) return 0
   const profile = profileOf(await loadSettings())
+  let filled = 0
   for (const r of todo) {
     const streams = await db.recordingStreams.get(r.id)
-    // Manual activities have no streams; their summary is what the source reported.
-    const recorded = streams?.t.length ? recordedSummary(r, streams) : { moving: r.moving ?? r.elapsed, distance: r.distance ?? 0 }
-    await db.recordings.update(r.id, { recorded, profile: r.profile ?? profile })
+    // Not downloaded to this device (yet): summarising now would take the reported totals for good.
+    if (!streams?.t.length) continue
+    await db.recordings.update(r.id, { recorded: recordedSummary(r, streams), profile: r.profile ?? profile })
+    filled++
   }
-  return todo.length
+  return filled
 }

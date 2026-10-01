@@ -4,7 +4,7 @@ A training log for running, treadmill (incline), stair climber and cycling worko
 
 ## Stack and commands
 
-TypeScript + React 19 + Vite. The app reads and writes a local copy of the signed-in user's data in the browser (IndexedDB via Dexie) and syncs it with Supabase (Postgres, Auth, Storage), provisioned through the Vercel Marketplace integration. Sign-in is by email link or 6-digit code. The only server code is Strava token handling (`server/strava.ts`), served by the Vite dev/preview server locally and by a Vercel function (`api/strava/[action].ts`) when deployed. Node is pinned by `mise.toml`.
+TypeScript + React 19 + Vite. The app reads and writes a local copy of the signed-in user's data in the browser (IndexedDB via Dexie) and syncs it with Supabase (Postgres, Auth), provisioned through the Vercel Marketplace integration. Sign-in is by email link or 6-digit code. The only server code is Strava token handling (`server/strava.ts`), served by the Vite dev/preview server locally and by a Vercel function (`api/strava/[action].ts`) when deployed. Node is pinned by `mise.toml`.
 
 ```
 mise run db:start    # local Supabase (Docker); emails go to Mailpit, http://127.0.0.1:54424
@@ -31,18 +31,18 @@ mise run test:watch
 | `src/metrics/workout.ts` | Per-step stats, zones, load, Minetti grade cost, GAP, workout totals |
 | `src/metrics/week.ts`, `dates.ts` | Week summaries, acute:chronic ratio, ISO weeks, local-date helpers |
 | `src/db/db.ts` | Dexie schema (DB `training-log-sync`), save/import/export, `clearLocalData` |
-| `src/db/legacy.ts` | Read-only export of the pre-account DB `training-log` |
 | `src/supabase.ts`, `src/auth/` | Supabase client; `AuthGate` (sign-in, then the app for that user), `SignIn`, sign-out |
-| `src/sync/` | Outbox middleware (`outbox.ts`), push/pull (`engine.ts`), doc shapes (`docs.ts`), streams in Storage (`streams.ts`) |
+| `src/sync/` | Outbox middleware (`outbox.ts`), push/pull (`engine.ts`), object ↔ server row mapping (`rows.ts`) |
 | `supabase/` | `config.toml` (auth settings, local ports), `migrations/`, `tests/` (pgTAP), email `templates/` |
-| `src/strava/` | OAuth client (`auth.ts`), API reads (`api.ts`), response mapping (`map.ts`), week sync (`sync.ts`, `useWeekSync.ts`) |
-| `src/recordings/match.ts` | Recording ↔ workout auto-linking and same-activity dedupe |
+| `src/strava/` | OAuth client (`auth.ts`), API reads (`api.ts`), response mapping (`map.ts`), week sync (`sync.ts`, `useWeekSync.ts`), streams on demand (`streams.ts`, `useStreams.ts`) |
+| `src/recordings/match.ts` | Recording ↔ workout auto-linking, `newLink` |
 | `src/recordings/intervals.ts`, `autolog.ts`, `recorded.ts` | Structure detection, auto-logging, recorded summaries |
 | `src/metrics/recorded.ts` | Totals from recorded data |
 | `server/strava.ts`, `api/strava/[action].ts` | Token exchange, access tokens, revoke (holds the client secret; tokens in `strava_tokens`) |
 | `src/ui/week/` | Main view: `WeekTable` (one row per session) and `WeekPanels` |
 | `src/ui/entry/` | Workout editor: shorthand input, timeline, editable step table |
 | `src/ui/charts/`, `tools/`, `settings/` | Charts, GAP calculator, settings dialog |
+| `src/ui/common/` | Shared UI: `Modal`, commit-on-blur `CommitInput`, threshold fields, recording summary row, speed-unit toggle |
 
 Units inside the model: seconds, metres, km/h, and incline as percent grade. Convert only when formatting.
 
@@ -60,21 +60,20 @@ Units inside the model: seconds, metres, km/h, and incline as percent grade. Con
   - Changing Settings must not alter past zones. The one exception: `saveSettings` fills in thresholds that a workout has no value for.
   - Thresholds have no defaults. Code must handle `thresholdSpeed`, `ftp`, `lthr` and `maxHr` being undefined.
 - **Totals iterate `expand(blocks)`**, never `count ×` multiplication, so `skipLastRest` is respected.
-- **Dexie migrations:** never edit an existing `db.version(n)`. Add a new version with an `upgrade`. Synced documents also live on the server, where Dexie upgrades don't reach, so a shape change to `Workout`, `WeekNote`, `Settings` or `Recording` also needs a case in `normalizeDoc` (`src/sync/docs.ts`). Pulls pass every document through it.
+- **Dexie migrations:** never edit an existing `db.version(n)`. Add a new version with an `upgrade`. Synced documents also live on the server, where Dexie upgrades don't reach, so a shape change to `Workout`, `WeekNote`, `Settings` or `Recording` also needs a migration for its server table and an entry in `src/sync/rows.ts` (which won't type-check until every field has one).
 - **Sync:**
   - The UI and all logic read and write Dexie only. `sync/outbox.ts` (a DBCore middleware) records every write to `workouts`, `weekNotes`, `settings` and `recordings` in `outbox`, in the same transaction. Push reads each key's current row; a missing row is a delete. Code that writes these tables needs no sync calls, but must not keep synced data anywhere else.
   - Writes that come from the server, and wiping local data, go through `withoutOutbox`. Code inside the middleware uses Dexie promise chains, not native `await` (it loses Dexie's transaction zone).
-  - The server stores each row as `doc` jsonb keyed by `(user_id, key)`. It keeps the newest write by `client_ts` (clamped to now + 1 min). Deletes are tombstones. Pulls go by the `rev` cursor. Pushes a server rejects are re-fetched by key.
+  - The server has a table per synced type (`workouts`, `week_notes`, `settings`, `recordings`) with a column per field; lists and nested objects are jsonb. `sync/rows.ts` converts between these rows and the app's objects. Clients only read the tables; all writes go through `sync_push`, which refuses fields that have no column. It keeps the newest write by `client_ts` (clamped to now + 1 min). Deletes are tombstones. Pulls go by the `rev` cursor. Pushes a server rejects are re-fetched by key.
   - IDs that more than one device can create must be deterministic, so the devices converge on one row: Strava recordings are `strava-<activity id>`, auto-logged workouts `auto-<recording id>`.
-  - `recordingStreams`, `stravaWeekFetch` and `stravaConnection` are per-device. Streams are uploaded to the private `streams` bucket (`{user id}/{recording id}.bin`, gzipped) and downloaded when shown (`useEnsureStreams`).
+  - `recordingStreams`, `stravaWeekFetch` and `stravaConnection` are per-device. A device without a recording's streams downloads them from Strava when it shows the recording (`useEnsureStreams`).
   - The local DB belongs to one user (`syncMeta.owner`). Signing in as someone else wipes it first; signing out wipes it.
   - Startup work that writes (summaries, auto-logging, Strava week sync) waits for `whenReady()`, the first pull.
-- **Recordings are source-agnostic.** Strava is the first source and FIT import is planned. A `Recording` holds the summary and laps; its per-sample arrays live in `recordingStreams` as typed arrays. A workout links to at most one recording (`Workout.recording`), which also stores how its steps line up with the recording (`alignment`).
+- **Recordings are source-agnostic.** Strava is the only source so far. A `Recording` holds the summary and laps; its per-sample arrays live in `recordingStreams` as typed arrays. A workout links to at most one recording (`Workout.recording`), which also stores how its steps line up with the recording (`offset`).
   - Week totals (table rows, footer, panels) come from the recording for runs with a GAP histogram and rides with a power histogram (`sessionTotals` in `metrics/recorded.ts`). Unlinked recordings count as unstructured sessions (`recordedTotals`). Treadmill and stair workouts, the editor, the viewer and planned zones stay plan-based.
   - `Recording.recorded` holds the moving time, distance and GAP/power/HR histograms, computed once from the streams (`recordings/recorded.ts`). Histograms don't depend on thresholds; zone them with `w.profile ?? fallback`, or `Recording.profile` for unlinked ones.
   - Auto-logging only creates a workout when detection finds clear workout structure (`looksLikeWorkout` in `recordings/intervals.ts`). Other runs and rides are marked `Recording.unstructured` and stay unstructured activities.
-  - Auto-linking never overrides a manual link.
-  - Recordings starting within 60 s of each other are the same activity and are merged.
+  - Auto-linking never overrides a manual link, and never re-links a recording the user unlinked (`Workout.unlinked`).
 - **Strava token boundary.** Only the code exchange, access-token requests and revoke go through `/api/strava/*`, because they need the client secret and Strava's token endpoint has no CORS. Data calls go straight from the browser to `https://www.strava.com/api/v3` (CORS allowed).
   - Tokens live only in `strava_tokens` (service role only; RLS with no policies). The browser gets short-lived access tokens from `/api/strava/token` and keeps them in memory. Every `/api/strava/*` call carries the user's Supabase access token.
   - Refresh tokens rotate: keep the newest. Refresh is single-flight across devices and server instances through a lease (`claim_strava_refresh`).

@@ -9,7 +9,7 @@ const pending = async () => (await db.outbox.toArray()).map((e) => `${e.table}:$
 
 const recording = (id: string): Recording => ({
   id, startTime: '2026-09-29T07:00:00Z', localDate: '2026-09-29', sport: 'run', rawSport: 'Run', elapsed: 600,
-  laps: [], importedAt: 0, updatedAt: 0,
+  laps: [], updatedAt: 0,
 })
 
 beforeEach(async () => {
@@ -24,7 +24,7 @@ describe('outbox', () => {
     expect(await pending()).toEqual(['recordings:r1', 'weekNotes:2026-09-28', 'workouts:w1'])
 
     await db.outbox.clear()
-    await db.recordings.update('r1', { unstructured: 1 })
+    await db.recordings.update('r1', { unstructured: true })
     await db.workouts.where('id').equals(w.id).modify((x) => void delete x.recording)
     expect(await pending()).toEqual(['recordings:r1', 'workouts:w1'])
 

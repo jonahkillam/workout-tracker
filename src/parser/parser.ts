@@ -1,5 +1,5 @@
 import type { Block, Range, Repeat, SpeedUnit, Step, StepKind, Targets } from '../model/types'
-import { tokenize, type Token, type Unit } from './tokenizer'
+import { round, tokenize, type Token, type Unit } from './tokenizer'
 
 export interface Diagnostic {
   start: number
@@ -8,7 +8,7 @@ export interface Diagnostic {
   message: string
 }
 
-export type TokenClass = 'head' | 'target' | 'role' | 'struct' | 'unknown'
+type TokenClass = 'head' | 'target' | 'role' | 'struct' | 'unknown'
 
 export interface Highlight {
   start: number
@@ -16,7 +16,7 @@ export interface Highlight {
   cls: TokenClass
 }
 
-export interface ParseResult {
+interface ParseResult {
   blocks: Block[]
   diagnostics: Diagnostic[]
   highlights: Highlight[]
@@ -24,10 +24,10 @@ export interface ParseResult {
 
 type QToken = Extract<Token, { k: 'q' }>
 
-type TargetKey = Exclude<keyof Targets, 'asPace' | 'rpe'> | 'rpe'
+export type TargetKey = Exclude<keyof Targets, 'asPace'>
 
 /** Targets that apply to rest steps too when not split with `//`. */
-const APPLY_TO_ALL: TargetKey[] = ['incline', 'level']
+export const APPLY_TO_ALL: readonly TargetKey[] = ['incline', 'level']
 
 const TARGET_UNITS: Partial<Record<Unit, TargetKey>> = {
   '%': 'incline',
@@ -58,11 +58,6 @@ interface TargetGroup {
 }
 
 const MILE = 1609.344
-
-function round(n: number, dp = 6): number {
-  const f = 10 ** dp
-  return Math.round(n * f) / f
-}
 
 /** Converts a target quantity into the model's canonical unit. */
 function targetValue(n: number, clock: boolean, unit: Unit): number {
@@ -172,14 +167,19 @@ class Parser {
       const q = this.next('head') as QToken
       const step: Step = { type: 'step', kind: leadingRole ?? 'steady', targets: {} }
       this.applyHeadQuantity(step, q, 'min')
+      // A role word can come before or after the targets: `10m wu @ 6km/h`, `10m @ 6km/h wu`.
       const role = this.parseRoles()
-      if (role) step.kind = role
-      if (role ?? leadingRole) this.explicitKind.add(step)
       if (this.peek()?.k === 'rmark') {
         const r = this.next('struct')
         this.diag(r, 'Rest marker only applies to repeats', 'warning')
       }
-      this.applyTargets([step], this.parseTargets(), true)
+      const targets = this.parseTargets()
+      const kind = this.trailingRole ?? role ?? leadingRole
+      if (kind) {
+        step.kind = kind
+        this.explicitKind.add(step)
+      }
+      this.applyTargets([step], targets, true)
       return step
     }
 
@@ -221,10 +221,10 @@ class Parser {
         step.duration = q.n
         break
       case 'min':
-        step.duration = q.n * 60
+        step.duration = round(q.n * 60)
         break
       case 'h':
-        step.duration = q.n * 3600
+        step.duration = round(q.n * 3600)
         break
       case 'km':
         step.distance = round(q.n * 1000)
@@ -244,7 +244,10 @@ class Parser {
   private parseRepeat(leadingRole: StepKind | undefined): Repeat {
     const counts: number[] = []
     while (this.peek()?.k === 'q' && (this.peek() as QToken).unit === null && this.peek(1)?.k === 'x') {
-      counts.push((this.next('struct') as QToken).n)
+      const q = this.next('struct') as QToken
+      if (q.n === 0) this.diag(q, 'A repeat needs at least 1 repetition')
+      else if (!Number.isInteger(q.n)) this.diag(q, 'Repeat count must be a whole number')
+      counts.push(q.n)
       this.next('struct')
     }
 
@@ -273,10 +276,7 @@ class Parser {
       this.diag(t, 'Expected a duration, distance or "(" after the repeat count')
     }
 
-    const role = this.parseRoles() ?? leadingRole
-    if (role && body.length >= 1 && body[0].type === 'step' && body[0].kind === 'work' && role !== 'rest') {
-      body[0].kind = role
-    }
+    let role = this.parseRoles() ?? leadingRole
 
     let block: Repeat = { type: 'repeat', count: counts[counts.length - 1], children: body }
     for (let i = counts.length - 2; i >= 0; i--) {
@@ -292,8 +292,10 @@ class Parser {
       if (!setRest) setRest = this.parseSetRest()
       if (this.parseSkipLastRest()) block.skipLastRest = true
       groups.push(...this.parseTargets())
+      role = this.trailingRole ?? role
       if (this.pos === before) break
     }
+    if (role && body[0]?.type === 'step' && body[0].kind === 'work' && role !== 'rest') body[0].kind = role
     this.applyTargets(leaves(block), groups, false)
     if (setRest) block.children.push(setRest)
     return block
@@ -341,10 +343,14 @@ class Parser {
     return rest
   }
 
+  /** The last role word among the targets just parsed (`10m @ 8km/h wu`). */
+  private trailingRole: StepKind | undefined
+
   /** Parses `@ target, target//target ...`. Stops at the next step head. */
   private parseTargets(): TargetGroup[] {
     const groups: TargetGroup[] = []
     this.inTargets = false
+    this.trailingRole = undefined
     while (this.pos < this.tokens.length) {
       const t = this.peek()!
       if (t.k === 'at') {
@@ -353,7 +359,11 @@ class Parser {
         continue
       }
       if (t.k === 'role') {
-        this.next('role')
+        // A role word right before a step head belongs to that step: `10m @ 6km/h wu 5m`.
+        let i = 1
+        while (this.peek(i)?.k === 'role') i++
+        if (this.isHead(this.peek(i))) break
+        this.trailingRole = this.parseRoles()
         continue
       }
       if (t.k === 'sep') {
@@ -411,6 +421,7 @@ class Parser {
         if (TARGET_UNITS[u] !== key) this.diag(q, 'Mixed units in target', 'warning')
         return targetValue(q.n, q.clock, u)
       })
+      if (key === 'zone' && vals.some((v) => v < 1 || v > 5)) this.diag(qs[0], 'Zones go from Z1 to Z5', 'warning')
       return {
         key,
         range: { min: Math.min(...vals), max: Math.max(...vals) },
@@ -450,11 +461,11 @@ class Parser {
 }
 
 /** All leaf steps of a block, in order, without expanding repeat counts. */
-export function leaves(block: Block): Step[] {
+function leaves(block: Block): Step[] {
   return block.type === 'step' ? [block] : block.children.flatMap(leaves)
 }
 
-export interface ParseOptions {
+interface ParseOptions {
   /** Unit for speeds written without one: `8.5` is km/h or 8.5 min/km. */
   speedUnit?: SpeedUnit
 }

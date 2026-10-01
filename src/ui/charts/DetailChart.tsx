@@ -1,35 +1,29 @@
-import { useEffect, useId, useRef, useState, type PointerEvent } from 'react'
-import type { RecordingStreams, SpeedUnit, Sport, Step } from '../../model/types'
+import { useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react'
+import { RUNNING } from '../../metrics/workout'
+import type { RecordingStreams, SpeedUnit, Sport } from '../../model/types'
 import { KIND_LABEL } from '../../model/types'
 import { fmtClock, fmtDuration, fmtSpeedIn, num } from '../../parser/format'
-import { fmtTarget, TARGET_ORDER } from '../../parser/serialize'
-import { bucketSeries, hrSeries, sampleAt } from '../../recordings/align'
+import { fmtTargets } from '../../parser/serialize'
+import { bucketSeries, pauseSpans, sampleAt, type StepSegment } from '../../recordings/align'
 import { effortMax, type Effort } from '../../recordings/derived'
 import { linePath } from './linePath'
 import { paceTicks, timeTicks, valueTicks } from './ticks'
 import { useTooltip } from './Tooltip'
 
-/** One step occurrence on the plan's clock. */
-export interface Segment {
-  step: Step
-  start: number
-  duration: number
-  zone: number
-}
-
 interface Props {
-  segments: Segment[]
+  segments: StepSegment[]
   sport: Sport
   speedUnit: SpeedUnit
-  hr?: { streams: RecordingStreams; offset: number }
+  /** The linked recording's streams, with step 1 starting `offset` seconds in. */
+  recording?: { streams: RecordingStreams; offset: number }
   /** GAP, pace or power, overlaid on the HR with its own zero-based axis on the right. */
   effort?: Effort
   /** Visible range in seconds on the plan's clock; undefined shows everything. */
   view?: [number, number]
   onView: (view: [number, number] | undefined) => void
-  height?: number
 }
 
+const HEIGHT = 220
 const M = { top: 8, right: 8, bottom: 20, left: 34 }
 /** Right margin when there's an effort axis. */
 const EFFORT_RIGHT = 40
@@ -58,7 +52,7 @@ function useWidth() {
  * right axis, with the plan's target dashed. Hovering shows the step and the
  * recorded values at that moment.
  */
-export function DetailChart({ segments, sport, speedUnit, hr, effort, view, onView, height = 220 }: Props) {
+export function DetailChart({ segments, sport, speedUnit, recording, effort, view, onView }: Props) {
   const [ref, width] = useWidth()
   const clipId = useId()
   const { show, hide, tip } = useTooltip()
@@ -66,13 +60,13 @@ export function DetailChart({ segments, sport, speedUnit, hr, effort, view, onVi
   const [hover, setHover] = useState<number | null>(null)
 
   const total = segments.reduce((end, s) => Math.max(end, s.start + s.duration), 0)
-  const lastT = hr ? hr.streams.t[hr.streams.t.length - 1] - hr.offset : 0
+  const lastT = recording ? recording.streams.t[recording.streams.t.length - 1] - recording.offset : 0
   const domain = Math.max(total, lastT)
   const [from, to] = view ?? [0, domain]
-  const showEffort = !!effort && !!hr
+  const showEffort = !!effort && !!recording
   const right = showEffort ? EFFORT_RIGHT : M.right
   const plotW = Math.max(0, width - M.left - right)
-  const plotH = height - M.top - M.bottom
+  const plotH = HEIGHT - M.top - M.bottom
   const bottom = M.top + plotH
   const x = (t: number) => ((t - from) / (to - from)) * plotW
   const tAt = (px: number) => from + (Math.min(plotW, Math.max(0, px)) / plotW) * (to - from)
@@ -81,32 +75,52 @@ export function DetailChart({ segments, sport, speedUnit, hr, effort, view, onVi
   // Pause steps are gaps: no bar, and the lines break.
   const buckets = Math.round(plotW)
   const bucketSecs = buckets ? (to - from) / buckets : 1
-  const pauses = segments.filter((s) => s.step.kind === 'pause').map((s): [number, number] => [s.start, s.start + s.duration])
-  const visibleSegs = segments.filter((s) => s.step.kind !== 'pause' && s.start < to && s.start + s.duration > from)
+  const visibleSegs = useMemo(
+    () => segments.filter((s) => s.step.kind !== 'pause' && s.start < to && s.start + s.duration > from),
+    [segments, from, to],
+  )
 
-  const series = hr?.streams.hr && plotW ? hrSeries(hr.streams, hr.offset, from, to, buckets, pauses) : []
-  const values = series.filter((v) => v !== undefined)
-  const pad = values.length ? Math.max(3, (Math.max(...values) - Math.min(...values)) * 0.08) : 0
-  const lo = values.length ? Math.floor(Math.min(...values) - pad) : 0
-  const hi = values.length ? Math.ceil(Math.max(...values) + pad) : 1
+  // The recorded series depend on the data and the view, not the pointer, so hovering only redraws the cursor.
+  const hrScale = useMemo(() => {
+    const pauses = pauseSpans(segments)
+    const hr = recording?.streams.hr
+    const series = hr && buckets ? bucketSeries(recording.streams.t, hr, recording.offset, from, to, buckets, pauses) : []
+    const values = series.filter((v) => v !== undefined)
+    const pad = values.length ? Math.max(3, (Math.max(...values) - Math.min(...values)) * 0.08) : 0
+    const lo = values.length ? Math.floor(Math.min(...values) - pad) : 0
+    const hi = values.length ? Math.ceil(Math.max(...values) + pad) : 1
+    return { series, hasValues: values.length > 0, lo, hi }
+  }, [segments, recording, from, to, buckets])
+  const { lo, hi } = hrScale
   const y = (v: number) => bottom - ((v - lo) / (hi - lo)) * plotH
   // Bridge sampling gaps; break the line at pauses.
-  const hrPath = linePath(series, (i) => M.left + i + 0.5, y, MAX_GAP / bucketSecs)
+  const hrPath = useMemo(() => {
+    const y = (v: number) => bottom - ((v - lo) / (hi - lo)) * plotH
+    return linePath(hrScale.series, (i) => M.left + i + 0.5, y, MAX_GAP / bucketSecs)
+  }, [hrScale, lo, hi, bottom, plotH, bucketSecs])
 
   // Effort, zero-based: speed (km/h) or W up from the bottom. Pace is labelled
   // as min/km at its speed, so stopped is at the bottom and faster is higher.
   const asPace = effort?.kind !== 'power' && speedUnit === 'pace'
-  const effortSeries =
-    showEffort && plotW ? bucketSeries(hr!.streams.t, effort!.values, hr!.offset, from, to, buckets, pauses) : []
-  const plannedLevels = showEffort
-    ? visibleSegs.flatMap((s) => {
-        const v = effort!.planned(s.step)
-        return v ? [{ s, v }] : []
-      })
-    : []
-  const eMax = effortMax(effortSeries, plannedLevels.map((p) => p.v))
+  const effortScale = useMemo(() => {
+    const series =
+      showEffort && buckets
+        ? bucketSeries(recording!.streams.t, effort!.values, recording!.offset, from, to, buckets, pauseSpans(segments))
+        : []
+    const planned = showEffort
+      ? visibleSegs.flatMap((s) => {
+          const v = effort!.planned(s.step)
+          return v ? [{ s, v }] : []
+        })
+      : []
+    return { series, planned, max: effortMax(series, planned.map((p) => p.v)) }
+  }, [showEffort, recording, effort, from, to, buckets, segments, visibleSegs])
+  const { series: effortSeries, planned: plannedLevels, max: eMax } = effortScale
   const ey = (v: number) => bottom - (v / eMax) * plotH
-  const effortPath = linePath(effortSeries, (i) => M.left + i + 0.5, ey, MAX_GAP / bucketSecs)
+  const effortPath = useMemo(
+    () => linePath(effortSeries, (i) => M.left + i + 0.5, (v) => bottom - (v / eMax) * plotH, MAX_GAP / bucketSecs),
+    [effortSeries, eMax, bottom, plotH, bucketSecs],
+  )
   const effortTicks = asPace
     ? paceTicks(eMax, plotH).map((pace) => ({ v: 3600 / pace, label: fmtClock(pace) }))
     : valueTicks(0, eMax).map((v) => ({ v, label: num(v, 0) }))
@@ -140,11 +154,11 @@ export function DetailChart({ segments, sport, speedUnit, hr, effort, view, onVi
     onView([t0, t1])
   }
 
-  const running = sport === 'run' || sport === 'treadmill'
+  const running = RUNNING.includes(sport)
   const readout = (t: number, bucket: number) => {
     const seg = segments.find((s) => t >= s.start && t < s.start + s.duration)
-    const sample = hr && sampleAt(hr.streams, hr.offset, t)
-    const targets = seg && TARGET_ORDER.map((k) => fmtTarget(k, seg.step.targets)).filter(Boolean).join(', ')
+    const sample = recording && sampleAt(recording.streams, recording.offset, t)
+    const targets = seg && fmtTargets(seg.step.targets)
     const gap = effort?.kind === 'gap' && sample ? effortSeries[bucket] : undefined
     return (
       <div>
@@ -152,7 +166,7 @@ export function DetailChart({ segments, sport, speedUnit, hr, effort, view, onVi
         {seg && (
           <div>
             {KIND_LABEL[seg.step.kind]}
-            {seg.step.kind !== 'pause' && ` · Z${seg.zone}`} · {fmtDuration(seg.duration)}
+            {seg.step.kind !== 'pause' && ` · Z${seg.stats.zone}`} · {fmtDuration(seg.duration)}
             {targets && ` · ${targets}`}
           </div>
         )}
@@ -170,16 +184,16 @@ export function DetailChart({ segments, sport, speedUnit, hr, effort, view, onVi
   }
 
   return (
-    <div ref={ref} className="detail-chart" style={{ height }}>
+    <div ref={ref} className="detail-chart" style={{ height: HEIGHT }}>
       {plotW > 0 && (
-        <svg width={width} height={height} role="img" aria-label="Session profile with recorded data">
+        <svg width={width} height={HEIGHT} role="img" aria-label="Session profile with recorded data">
           <defs>
             <clipPath id={clipId}>
               <rect x={M.left} y={0} width={plotW} height={bottom} />
             </clipPath>
           </defs>
 
-          {values.length > 0 &&
+          {hrScale.hasValues &&
             valueTicks(lo, hi).map((v) => (
               <g key={v}>
                 <line className="grid" x1={M.left} x2={M.left + plotW} y1={y(v)} y2={y(v)} />
@@ -199,7 +213,7 @@ export function DetailChart({ segments, sport, speedUnit, hr, effort, view, onVi
             {visibleSegs.map((s, i) => {
               const x0 = x(s.start)
               const w = x(s.start + s.duration) - x0
-              const h = (plotH * (s.zone + 1)) / 6
+              const h = (plotH * (s.stats.zone + 1)) / 6
               return (
                 <rect
                   key={i}
@@ -207,7 +221,7 @@ export function DetailChart({ segments, sport, speedUnit, hr, effort, view, onVi
                   y={bottom - h}
                   width={Math.max(0.5, w > 4 ? w - 1 : w)}
                   height={h}
-                  style={{ fill: `var(--z${s.zone})` }}
+                  style={{ fill: `var(--z${s.stats.zone})` }}
                 />
               )
             })}
@@ -229,7 +243,7 @@ export function DetailChart({ segments, sport, speedUnit, hr, effort, view, onVi
           <line className="axis" x1={M.left} x2={M.left + plotW} y1={bottom} y2={bottom} />
 
           {timeTicks(from, to, Math.max(2, Math.floor(plotW / 70))).map((t) => (
-            <text key={t} className="tick" x={M.left + x(t)} y={height - 5} textAnchor="middle">
+            <text key={t} className="tick" x={M.left + x(t)} y={HEIGHT - 5} textAnchor="middle">
               {fmtClock(t)}
             </text>
           ))}
@@ -252,7 +266,7 @@ export function DetailChart({ segments, sport, speedUnit, hr, effort, view, onVi
             x={0}
             y={0}
             width={width}
-            height={height}
+            height={HEIGHT}
             fill="transparent"
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}

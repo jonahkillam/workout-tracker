@@ -1,12 +1,8 @@
 import type { Block, Range, Repeat, Step, StepKind, Targets } from '../model/types'
-import { fmtDistance, fmtDuration, fmtRange, fmtSpeed, num } from './format'
+import { amountText, exact, fmtDuration, fmtRange, fmtSpeed, num } from './format'
+import { APPLY_TO_ALL, type TargetKey } from './parser'
 
-export type RangeKey = 'incline' | 'speed' | 'power' | 'hr' | 'zone' | 'stepRate' | 'level'
-
-export const TARGET_ORDER: (RangeKey | 'rpe')[] = ['incline', 'speed', 'power', 'hr', 'zone', 'rpe', 'stepRate', 'level']
-
-/** Targets that apply to rest steps too when written once (mirrors the parser). */
-const APPLY_TO_ALL = new Set(['incline', 'level'])
+export const TARGET_ORDER: TargetKey[] = ['incline', 'speed', 'power', 'hr', 'zone', 'rpe', 'stepRate', 'level']
 
 const ROLE_WORD: Record<StepKind, string> = {
   wu: 'wu',
@@ -17,26 +13,32 @@ const ROLE_WORD: Record<StepKind, string> = {
   pause: 'pause',
 }
 
-export function fmtTarget(key: RangeKey | 'rpe', t: Targets): string | undefined {
-  if (key === 'rpe') return t.rpe === undefined ? undefined : `rpe${num(t.rpe, 1)}`
+/** One target in shorthand, rounded for display unless `precise` (as the serializer writes it). */
+export function fmtTarget(key: TargetKey, t: Targets, precise = false): string | undefined {
+  if (key === 'rpe') return t.rpe === undefined ? undefined : `rpe${precise ? exact(t.rpe) : num(t.rpe, 1)}`
   const r = t[key]
   if (!r) return undefined
   switch (key) {
     case 'incline':
-      return fmtRange(r, '%')
+      return fmtRange(r, '%', '', precise)
     case 'speed':
-      return fmtSpeed(r, t.asPace)
+      return fmtSpeed(r, t.asPace, precise)
     case 'power':
-      return fmtRange(r, 'w')
+      return fmtRange(r, 'w', '', precise)
     case 'hr':
-      return fmtRange(r, 'bpm')
+      return fmtRange(r, 'bpm', '', precise)
     case 'zone':
-      return fmtRange(r, '', 'Z')
+      return fmtRange(r, '', 'Z', precise)
     case 'stepRate':
-      return fmtRange(r, 'spm')
+      return fmtRange(r, 'spm', '', precise)
     case 'level':
-      return fmtRange(r, '', 'lvl')
+      return fmtRange(r, '', 'lvl', precise)
   }
+}
+
+/** A step's targets in shorthand, for display: `15%, 8.5km/h, Z4`. */
+export function fmtTargets(t: Targets, keys: TargetKey[] = TARGET_ORDER, precise = false): string {
+  return keys.map((k) => fmtTarget(k, t, precise)).filter(Boolean).join(', ')
 }
 
 function sameValue(a: Range | number | undefined, b: Range | number | undefined): boolean {
@@ -44,12 +46,9 @@ function sameValue(a: Range | number | undefined, b: Range | number | undefined)
   return a === b
 }
 
-function targetList(parts: string[]): string {
-  return parts.length ? ` @ ${parts.join(', ')}` : ''
-}
-
 function singleTargets(t: Targets): string {
-  return targetList(TARGET_ORDER.map((k) => fmtTarget(k, t)).filter((s): s is string => !!s))
+  const text = fmtTargets(t, TARGET_ORDER, true)
+  return text && ` @ ${text}`
 }
 
 /**
@@ -60,10 +59,10 @@ function pairTargets(work: Targets, rest: Targets): string | null {
   if (work.speed && rest.speed && !!work.asPace !== !!rest.asPace) return null
   const parts: string[] = []
   for (const key of TARGET_ORDER) {
-    const w = fmtTarget(key, work)
-    const r = fmtTarget(key, rest)
+    const w = fmtTarget(key, work, true)
+    const r = fmtTarget(key, rest, true)
     if (!w && !r) continue
-    if (APPLY_TO_ALL.has(key)) {
+    if (APPLY_TO_ALL.includes(key)) {
       if (!w || !r) return null
       parts.push(sameValue(work[key], rest[key]) ? w : `${w}//${r}`)
     } else {
@@ -71,14 +70,15 @@ function pairTargets(work: Targets, rest: Targets): string | null {
       parts.push(r ? `${w}//${r}` : w)
     }
   }
-  return targetList(parts)
+  return parts.length ? ` @ ${parts.join(', ')}` : ''
 }
 
+/**
+ * A step's amount, written exactly. A step without one (possible only from the step table) has no
+ * shorthand: it serializes to its targets alone, which parse to nothing, so the table must not allow it.
+ */
 function head(step: Step, bare = false): string {
-  if (step.duration !== undefined) return bare && step.duration < 100 ? num(step.duration) : fmtDuration(step.duration)
-  if (step.distance !== undefined) return fmtDistance(step.distance)
-  if (step.floors !== undefined) return `${num(step.floors)}fl`
-  return ''
+  return bare && step.duration !== undefined && step.duration < 100 ? exact(step.duration) : amountText(step, true)
 }
 
 /**
@@ -150,7 +150,7 @@ function serializeRepeat(r: Repeat): string {
   const last = children[children.length - 1]
   if (children.length >= 2 && isSetRest(last)) {
     children = children.slice(0, -1)
-    setRest = ` r${fmtDuration(last.duration!)}`
+    setRest = ` r${fmtDuration(last.duration!, true)}`
   }
   const compact = compactBody(children)
   if (compact) return withSuffix(`${[r.count, ...compact.counts].join('x')}x${compact.text}`, setRest + skip)

@@ -1,15 +1,16 @@
-import { useMemo, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { fmtDay, today, weekDays } from '../../metrics/dates'
 import type { WeekSummary } from '../../metrics/week'
-import { recordedTotals, sessionTotals } from '../../metrics/recorded'
+import { recordedAverage, recordedTotals, sessionTotals } from '../../metrics/recorded'
 import type { Totals } from '../../metrics/workout'
-import type { Recording, RecordingStreams, Settings, SpeedUnit, Workout } from '../../model/types'
+import type { Block, Profile, Recording, RecordingStreams, Settings, Sport, Workout } from '../../model/types'
 import { SPORT_LABEL, SPORTS } from '../../model/types'
-import { fmtHours, fmtSpeedIn, num } from '../../parser/format'
+import { fmtHours, num } from '../../parser/format'
 import { linkOffset } from '../../recordings/align'
 import { effortFor, type Effort } from '../../recordings/derived'
 import { mainSetSummary } from '../../parser/summary'
 import { TimelineBar } from '../charts/TimelineBar'
+import { stravaUrl } from '../common/recording'
 import { NoteLines } from '../view/NoteLines'
 
 interface Props {
@@ -41,20 +42,27 @@ function NumberCells({ t, stair }: { t: Cells; stair?: boolean }) {
   )
 }
 
-const stravaUrl = (r: Recording) => (r.stravaId ? `https://www.strava.com/activities/${r.stravaId}` : undefined)
+/** Effort series by streams row, with the inputs they were worked out from. */
+const effortCache = new WeakMap<RecordingStreams, { key: string; effort: Effort | undefined }>()
 
-/** Average pace, speed or power over the recording's moving time, for an unstructured activity's subline. */
-function recordedAverage(r: Recording, speedUnit: SpeedUnit): string | undefined {
-  const power = r.recorded?.power
-  if (power) {
-    const secs = power.secs.reduce((a, b) => a + b, 0)
-    const watts = power.secs.reduce((a, s, i) => a + (i + 0.5) * power.bin * s, 0)
-    if (secs) return `${Math.round(watts / secs)} W`
-  }
-  const moving = r.moving ?? r.recorded?.moving
-  if (r.sport === 'stair' || !r.distance || !moving) return undefined
-  const kmh = (r.distance / moving) * 3.6
-  return fmtSpeedIn(kmh, r.sport === 'run' ? 'pace' : r.sport === 'ride' ? 'kmh' : speedUnit)
+/**
+ * GAP, pace or power for a timeline, worked out once per recording and plan: the week's queries hand
+ * back new workout objects on every change, but the streams row stays the same object until it changes.
+ */
+function cachedEffort(
+  streams: RecordingStreams,
+  sport: Sport,
+  blocks: Block[],
+  profile: Profile,
+  rpe: number | undefined,
+  offset: number,
+): Effort | undefined {
+  const key = JSON.stringify([sport, blocks, profile, rpe, offset])
+  const hit = effortCache.get(streams)
+  if (hit?.key === key) return hit.effort
+  const effort = effortFor(streams, sport, blocks, profile, rpe, offset)
+  effortCache.set(streams, { key, effort })
+  return effort
 }
 
 export function WeekTable({ start, workouts, recordings, streams, summary, acwr, settings, onOpen, onAdd, onLogRecording }: Props) {
@@ -62,23 +70,6 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
   const byId = new Map(recordings.map((r) => [r.id, r]))
   const linked = new Set(workouts.map((w) => w.recording?.id).filter(Boolean))
   const rows: ReactNode[] = []
-  // GAP, pace or power per linked workout and unstructured activity, for the timelines.
-  const efforts = useMemo(() => {
-    const out = new Map<string, Effort>()
-    for (const w of workouts) {
-      const s = w.recording && streams.get(w.recording.id)
-      const e = s && effortFor(s, w.sport, w.blocks, w.profile ?? settings, w.rpe, linkOffset(w.recording))
-      if (e) out.set(w.id, e)
-    }
-    const linkedIds = new Set(workouts.map((w) => w.recording?.id))
-    for (const r of recordings) {
-      const s = !linkedIds.has(r.id) && streams.get(r.id)
-      const e = s && effortFor(s, r.sport, [], r.profile ?? settings, undefined, 0)
-      if (e) out.set(r.id, e)
-    }
-    return out
-  }, [workouts, recordings, streams, settings])
-
   for (const date of weekDays(start)) {
     const sessions = workouts.filter((w) => w.date === date).sort((a, b) => a.createdAt - b.createdAt)
     const unstructured = recordings.filter((r) => r.localDate === date && !linked.has(r.id))
@@ -154,8 +145,8 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
               rpe={w.rpe}
               height={30}
               mini
-              hr={recStreams ? { streams: recStreams, offset: linkOffset(w.recording) } : undefined}
-              effort={efforts.get(w.id)}
+              recording={recStreams ? { streams: recStreams, offset: linkOffset(w.recording) } : undefined}
+              effort={recStreams && cachedEffort(recStreams, w.sport, w.blocks, profile, w.rpe, linkOffset(w.recording))}
             />
             {w.notes?.length ? <NoteLines notes={w.notes} clamp /> : null}
           </td>
@@ -196,8 +187,8 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
                 profile={r.profile ?? settings}
                 height={30}
                 mini
-                hr={{ streams: recStreams, offset: 0 }}
-                effort={efforts.get(r.id)}
+                recording={{ streams: recStreams, offset: 0 }}
+                effort={cachedEffort(recStreams, r.sport, [], r.profile ?? settings, undefined, 0)}
               />
             )}
           </td>

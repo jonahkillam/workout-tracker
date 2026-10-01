@@ -1,21 +1,23 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { db } from '../../db/db'
 import { fmtLongDate } from '../../metrics/dates'
 import { stepStats, workoutTotals } from '../../metrics/workout'
-import { expand, occurrences } from '../../model/tree'
+import { occurrences } from '../../model/tree'
 import type { Block, Settings, Step, Workout } from '../../model/types'
 import { KIND_LABEL, SPORT_LABEL } from '../../model/types'
 import { amountText, fmtClock, fmtSpeedIn } from '../../parser/format'
-import { fmtTarget, TARGET_ORDER } from '../../parser/serialize'
+import { fmtTargets } from '../../parser/serialize'
 import { mainSetSummary } from '../../parser/summary'
-import { linkOffset, stepAverage, stepHr, stepWindows } from '../../recordings/align'
+import { linkOffset, stepAverage, stepSegments, stepWindows } from '../../recordings/align'
 import { effortFor, type EffortKind } from '../../recordings/derived'
-import { DetailChart, type Segment } from '../charts/DetailChart'
+import { DetailChart } from '../charts/DetailChart'
 import { ZoneLegend } from '../charts/TimelineBar'
+import { Modal } from '../common/Modal'
+import { RecordingSummary } from '../common/RecordingSummary'
 import { StatsRow } from '../entry/StatsRow'
 import { NoteLines } from './NoteLines'
-import { useEnsureStreams } from '../../sync/useStreams'
+import { useEnsureStreams } from '../../strava/useStreams'
 
 interface Props {
   workout: Workout
@@ -29,9 +31,6 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
   const profile = w.profile ?? settings
   const speedUnit = w.speedUnit ?? settings.speedUnit
   const [view, setView] = useState<[number, number]>()
-  // Focus the dialog so Esc works straight away.
-  const dialog = useRef<HTMLDivElement>(null)
-  useEffect(() => dialog.current?.focus(), [])
 
   const recording = useLiveQuery(() => (w.recording ? db.recordings.get(w.recording.id) : undefined), [w.recording?.id])
   useEnsureStreams(w.recording ? [w.recording.id] : [])
@@ -41,22 +40,12 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
   }, [w.recording?.id])
   const offset = linkOffset(w.recording)
 
-  const segments = useMemo(() => {
-    const out: Segment[] = []
-    let at = 0
-    for (const step of expand(w.blocks, 2000)) {
-      const { duration, zone } = stepStats(step, w.sport, profile, w.rpe)
-      if (!duration) continue
-      out.push({ step, start: at, duration, zone })
-      at += duration
-    }
-    return out
-  }, [w.blocks, w.sport, profile, w.rpe])
+  const segments = useMemo(() => stepSegments(w.blocks, w.sport, profile, w.rpe), [w.blocks, w.sport, profile, w.rpe])
   const windows = useMemo(
     () => stepWindows(w.blocks, w.sport, profile, w.rpe, offset),
     [w.blocks, w.sport, profile, w.rpe, offset],
   )
-  const hrByStep = useMemo(() => (streams?.hr ? stepHr(windows, streams) : undefined), [streams, windows])
+  const hrByStep = useMemo(() => (streams?.hr ? stepAverage(windows, streams.t, streams.hr) : undefined), [streams, windows])
 
   // GAP, pace or power, whichever suits the sport and the terrain.
   const effort = useMemo(
@@ -72,99 +61,80 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
   const title = w.title || mainSetSummary(w.blocks, speedUnit) || 'Workout'
 
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div
-        className="modal"
-        role="dialog"
-        aria-label="Workout"
-        tabIndex={-1}
-        ref={dialog}
-        onKeyDown={(e) => {
-          if (e.key !== 'Escape') return
-          if (view) setView(undefined)
-          else onClose()
-        }}
-      >
-        <header className="modal-head">
-          <h2>{title}</h2>
-          <span className="meta">
-            {fmtLongDate(w.date)} · {SPORT_LABEL[w.sport]}
-            {w.rpe !== undefined && ` · RPE ${w.rpe}`}
-          </span>
-        </header>
+    <Modal
+      label="Workout"
+      onClose={onClose}
+      onKeyDown={(e) => {
+        // Esc zooms out first.
+        if (e.key === 'Escape' && view) {
+          e.preventDefault()
+          setView(undefined)
+        }
+      }}
+    >
+      <header className="modal-head">
+        <h2>{title}</h2>
+        <span className="meta">
+          {fmtLongDate(w.date)} · {SPORT_LABEL[w.sport]}
+          {w.rpe !== undefined && ` · RPE ${w.rpe}`}
+        </span>
+      </header>
 
-        {recording && (
-          <div className="recording-row">
-            <span className="label">Recording</span>
-            <span>
-              <strong>{recording.name ?? recording.rawSport}</strong> ·{' '}
-              {new Date(recording.startTime).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })} ·{' '}
-              {fmtClock(recording.elapsed)}
-              {recording.distance ? ` · ${(recording.distance / 1000).toFixed(2)} km` : ''}
-              {recording.avgHr ? ` · avg HR ${Math.round(recording.avgHr)}` : ''}
-              {recording.maxHr ? ` / max ${Math.round(recording.maxHr)}` : ''}
-              {offset !== 0 && <span className="meta"> · plan starts at {fmtClock(offset)}</span>}
+      {recording && (
+        <RecordingSummary recording={recording} note={offset !== 0 ? `plan starts at ${fmtClock(offset)}` : undefined} />
+      )}
+
+      {w.rawText && <pre className="shorthand-view">{w.rawText}</pre>}
+      <StatsRow totals={totals} sport={w.sport} speedUnit={speedUnit} />
+
+      {segments.length > 0 || streams ? (
+        <>
+          <div className="chart-bar">
+            <span className="meta">
+              {view
+                ? `Showing ${fmtClock(view[0])}–${fmtClock(view[1])}`
+                : 'Drag across the chart to zoom in. Hover for values.'}
             </span>
-            {recording.stravaId && (
-              <a href={`https://www.strava.com/activities/${recording.stravaId}`} target="_blank" rel="noreferrer">
-                Strava ↗
-              </a>
-            )}
+            {view && <button onClick={() => setView(undefined)}>Reset zoom</button>}
           </div>
-        )}
+          <DetailChart
+            segments={segments}
+            sport={w.sport}
+            speedUnit={speedUnit}
+            recording={streams ? { streams, offset } : undefined}
+            effort={effort}
+            view={view}
+            onView={setView}
+          />
+          <div className="timeline-caption">
+            <span>
+              Height = zone{streams?.hr ? ' · red line = recorded HR (bpm)' : ''}
+              {effort && ` · grey line = ${EFFORT_CAPTION[effort.kind]} (right axis), dashed = plan`}
+            </span>
+            <ZoneLegend />
+          </div>
+        </>
+      ) : (
+        <div className="empty">No timed steps yet.</div>
+      )}
 
-        {w.rawText && <pre className="shorthand-view">{w.rawText}</pre>}
-        <StatsRow totals={totals} sport={w.sport} speedUnit={speedUnit} />
+      <StepList
+        blocks={w.blocks}
+        hr={hrByStep}
+        effort={effort && effortByStep && { label: EFFORT_LABEL[effort.kind], byStep: effortByStep, format: fmtEffort }}
+        zoneOf={(s) => stepStats(s, w.sport, profile, w.rpe).zone}
+      />
 
-        {segments.length > 0 || streams ? (
-          <>
-            <div className="chart-bar">
-              <span className="meta">
-                {view
-                  ? `Showing ${fmtClock(view[0])}–${fmtClock(view[1])}`
-                  : 'Drag across the chart to zoom in. Hover for values.'}
-              </span>
-              {view && <button onClick={() => setView(undefined)}>Reset zoom</button>}
-            </div>
-            <DetailChart
-              segments={segments}
-              sport={w.sport}
-              speedUnit={speedUnit}
-              hr={streams ? { streams, offset } : undefined}
-              effort={effort}
-              view={view}
-              onView={setView}
-            />
-            <div className="timeline-caption">
-              <span>
-                Height = zone{streams?.hr ? ' · red line = recorded HR (bpm)' : ''}
-                {effort && ` · grey line = ${EFFORT_CAPTION[effort.kind]} (right axis), dashed = plan`}
-              </span>
-              <ZoneLegend />
-            </div>
-          </>
-        ) : (
-          <div className="empty">No timed steps yet.</div>
-        )}
+      {w.notes?.length ? <NoteLines notes={w.notes} /> : null}
 
-        <StepList
-          blocks={w.blocks}
-          hr={hrByStep}
-          effort={effort && effortByStep && { label: EFFORT_LABEL[effort.kind], byStep: effortByStep, format: fmtEffort }}
-          zoneOf={(s) => stepStats(s, w.sport, profile, w.rpe).zone}
-        />
-
-        {w.notes?.length ? <NoteLines notes={w.notes} /> : null}
-
-        <footer className="modal-actions">
-          <span className="spacer" />
-          <button onClick={onClose}>Close</button>
-          <button className="primary" onClick={onEdit}>
-            Edit
-          </button>
-        </footer>
-      </div>
-    </div>
+      <footer className="modal-actions">
+        <span className="spacer" />
+        <button onClick={onClose}>Close</button>
+        <button className="primary" onClick={onEdit}>
+          Edit
+        </button>
+      </footer>
+    </Modal>
   )
 }
 
@@ -210,7 +180,7 @@ function StepList({
         <tr key={k}>
           <td style={indent}>{KIND_LABEL[b.kind]}</td>
           <td>{amountText(b)}</td>
-          <td>{TARGET_ORDER.map((t) => fmtTarget(t, b.targets)).filter(Boolean).join(', ')}</td>
+          <td>{fmtTargets(b.targets)}</td>
           <td className="computed">
             {b.kind === 'pause' ? 'not counted' : `Z${zoneOf(b)}`}
             {count !== 1 ? ` · ×${count}` : ''}

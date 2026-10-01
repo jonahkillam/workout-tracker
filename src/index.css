@@ -14,6 +14,7 @@
   --incline: #9aa0a8;
   /* Recorded heart rate: a line over the blue zone bars. */
   --hr: #d7263d;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 
   /* Zone ramp: one hue, light→dark, validated as an ordinal ramp. */
   --z1: #86b6ef;
@@ -168,7 +169,7 @@ input[aria-invalid='true'] {
 }
 
 code {
-  font: 12px ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font: 12px var(--mono);
 }
 
 .meta {
@@ -312,16 +313,17 @@ td.day.today .dom {
   color: var(--link);
 }
 
+/* Transparent rather than hidden, so it stays in the tab order. */
 td.day .add {
   margin-top: 4px;
   font-size: 12px;
-  visibility: hidden;
+  opacity: 0;
 }
 
 tr:hover td.day .add,
 td.day .add:focus-visible,
 tr.empty-day td.day .add {
-  visibility: visible;
+  opacity: 1;
 }
 
 tr.empty-day td.day .add {
@@ -348,7 +350,7 @@ td.detail .headline {
 }
 
 td.detail .headline.main-set {
-  font: 600 14px/1.4 ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font: 600 14px/1.4 var(--mono);
 }
 
 td.detail .subline {
@@ -685,6 +687,9 @@ table.week a:hover {
 .recording-row button {
   height: 22px;
   font-size: 12px;
+}
+
+.recording-row button:first-of-type {
   margin-left: auto;
 }
 
@@ -753,7 +758,7 @@ table.week a:hover {
 
 .shorthand {
   position: relative;
-  font: 14px/1.6 ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font: 14px/1.6 var(--mono);
 }
 
 .shorthand textarea,
@@ -924,7 +929,7 @@ table.week a:hover {
 }
 
 .steps input {
-  font: 12px ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font: 12px var(--mono);
 }
 
 .steps input:hover,
@@ -970,6 +975,15 @@ table.week a:hover {
   margin-right: 4px;
 }
 
+/* Scrolls sideways inside the dialog on narrow screens. */
+fieldset.step-table {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  overflow-x: auto;
+}
+
 .builder {
   display: flex;
   flex-wrap: wrap;
@@ -1002,7 +1016,7 @@ table.week a:hover {
 .shorthand-view {
   margin: 0 0 4px;
   padding: 6px 10px;
-  font: 12px ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font: 12px var(--mono);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: var(--panel);

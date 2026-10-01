@@ -15,9 +15,9 @@ export function timeTicks(from: number, to: number, count = 6): number[] {
 }
 
 /** Round-number values across `[min, max]`, at most about `count` of them. */
-export function valueTicks(min: number, max: number, count = 4, steps = VALUE_STEPS): number[] {
-  const last = steps[steps.length - 1]
-  const step = steps.find((s) => (max - min) / s <= count) ?? Math.ceil((max - min) / count / last) * last
+export function valueTicks(min: number, max: number, count = 4): number[] {
+  const last = VALUE_STEPS[VALUE_STEPS.length - 1]
+  const step = VALUE_STEPS.find((s) => (max - min) / s <= count) ?? Math.ceil((max - min) / count / last) * last
   return multiples(min, max, step)
 }
 

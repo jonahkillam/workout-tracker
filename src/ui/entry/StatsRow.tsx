@@ -1,10 +1,10 @@
-import { averageGap, type Totals } from '../../metrics/workout'
+import { averageGap, RUNNING, type Totals } from '../../metrics/workout'
 import type { SpeedUnit, Sport } from '../../model/types'
 import { fmtClock, fmtHours, fmtSpeedIn, num } from '../../parser/format'
 
 /** Planned totals for a workout: time, distance, climb, GAP, load and zones. */
 export function StatsRow({ totals, sport, speedUnit }: { totals: Totals; sport: Sport; speedUnit: SpeedUnit }) {
-  const running = sport === 'run' || sport === 'treadmill'
+  const running = RUNNING.includes(sport)
   return (
     <div className="stats-row">
       <div>

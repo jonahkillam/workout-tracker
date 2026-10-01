@@ -33,22 +33,28 @@ describe('recordingFromSummary', () => {
     const r = recordingFromSummary(summary, undefined, 1000)
     expect(r).toMatchObject({
       stravaId: 42, localDate: '2026-09-29', sport: 'treadmill', rawSport: 'Run', elapsed: 3300,
-      avgHr: 151.2, maxHr: 178, laps: [], importedAt: 1000, updatedAt: 1000,
+      avgHr: 151.2, maxHr: 178, laps: [], updatedAt: 1000,
     })
   })
 
-  it('keeps identity, laps and import time when updating', () => {
+  it('keeps identity and details when updating', () => {
     const first = recordingFromSummary(summary, undefined, 1000)
-    const withLaps = { ...first, laps: [{ start: 0, duration: 60 }] }
+    const withLaps = { ...first, laps: [{ start: 0, duration: 60 }], detailsFetched: true, autoLogged: true }
     const again = recordingFromSummary({ ...summary, name: 'Renamed' }, withLaps, 2000)
-    expect(again).toMatchObject({ id: first.id, name: 'Renamed', laps: [{ start: 0, duration: 60 }], importedAt: 1000, updatedAt: 2000 })
+    expect(again).toMatchObject({ id: 'strava-42', name: 'Renamed', laps: [{ start: 0, duration: 60 }], detailsFetched: true, autoLogged: true, updatedAt: 2000 })
+  })
+
+  it('returns the existing recording itself when the summary is unchanged', () => {
+    const first = { ...recordingFromSummary(summary, undefined, 1000), autoLogged: true }
+    expect(recordingFromSummary(summary, first, 2000)).toBe(first)
+    expect(recordingFromSummary({ ...summary, moving_time: 3100 }, first, 2000)).not.toBe(first)
   })
 })
 
 describe('streams and laps', () => {
   it('converts streams to typed arrays', () => {
     const s = streamsFromStrava('r', {
-      time: { data: [0, 1, 2, 5], original_size: 4, resolution: 'high' },
+      time: { data: [0, 1, 2, 5] },
       heartrate: { data: [120, 121, 125, 130] },
       velocity_smooth: { data: [2.5, 2.6, 2.6, 2.7] },
     })!
@@ -56,7 +62,6 @@ describe('streams and laps', () => {
     expect(s.hr).toEqual(Uint8Array.from([120, 121, 125, 130]))
     expect(s.speed?.[3]).toBeCloseTo(2.7)
     expect(s.cadence).toBeUndefined()
-    expect(s.originalSize).toBe(4)
     expect(streamsFromStrava('r', {})).toBeUndefined()
   })
 

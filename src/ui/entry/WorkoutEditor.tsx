@@ -1,23 +1,29 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useMemo, useState } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import { db, deleteWorkout, normalizeNotes, saveWorkout } from '../../db/db'
 import { fmtLongDate } from '../../metrics/dates'
 import { needsThresholdPace, workoutTotals } from '../../metrics/workout'
 import { withSpeedUnit } from '../../model/tree'
 import type { Block, Note, Profile, Recording, RecordingLink, Settings, SpeedUnit, Sport, Workout } from '../../model/types'
 import { PROFILE_KEYS, profileOf, SPORT_LABEL, SPORTS } from '../../model/types'
-import { fmtClock, fmtDuration, fmtPace, parsePaceInput } from '../../parser/format'
+import { fmtClock, fmtDuration, fmtPace } from '../../parser/format'
 import { parseWorkout } from '../../parser/parser'
-import { linkOffset, stepHr, stepWindows } from '../../recordings/align'
+import { linkOffset, stepAverage, stepWindows } from '../../recordings/align'
 import { detectText } from '../../recordings/autolog'
 import { canDetect } from '../../recordings/intervals'
+import { newLink } from '../../recordings/match'
 import { serializeBlocks } from '../../parser/serialize'
 import { TimelineBar } from '../charts/TimelineBar'
+import { CommitInput } from '../common/CommitInput'
+import { Modal } from '../common/Modal'
+import { fmtStart } from '../common/recording'
+import { RecordingSummary } from '../common/RecordingSummary'
+import { ThresholdFields } from '../common/ThresholdFields'
 import { NotesEditor } from './NotesEditor'
 import { ShorthandInput } from './ShorthandInput'
 import { StatsRow } from './StatsRow'
 import { StepTable } from './StepTable'
-import { useEnsureStreams } from '../../sync/useStreams'
+import { useEnsureStreams } from '../../strava/useStreams'
 
 export type Draft = Partial<Workout> & { date: string; sport: Sport }
 
@@ -33,18 +39,19 @@ function parseTotalTime(text: string): number | undefined {
   return b?.type === 'step' ? b.duration : undefined
 }
 
-function profileSummary(p: Profile): string {
+/** The workout's thresholds, plus its stair heights when they differ from Settings' (the editor has no fields for those). */
+function profileSummary(p: Profile, current: Profile): string {
   return [
     `threshold pace ${p.thresholdSpeed ? `${fmtPace(p.thresholdSpeed)}/km` : 'not set'}`,
     p.ftp && `FTP ${p.ftp} W`,
     p.lthr && `LTHR ${p.lthr}`,
     p.maxHr && `max HR ${p.maxHr}`,
+    p.stairStepHeight !== current.stairStepHeight && `step ${p.stairStepHeight} m`,
+    p.stairFloorHeight !== current.stairFloorHeight && `floor ${p.stairFloorHeight} m`,
   ]
     .filter(Boolean)
     .join(' · ')
 }
-
-const optionalNumber = (v: string) => (v.trim() ? Number(v) : undefined)
 
 /** Parses an offset as seconds ("90", "-15") or clock time ("1:30", "1:02:00"). */
 function parseOffset(text: string): number | undefined {
@@ -70,24 +77,25 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
   const [profile, setProfile] = useState<Profile>(draft.profile ?? profileOf(settings))
   const [paceText, setPaceText] = useState(profile.thresholdSpeed ? fmtPace(profile.thresholdSpeed) : '')
   const [link, setLink] = useState<RecordingLink | undefined>(draft.recording)
-  // Text as interval detection wrote it; the workout stays `generated` while the text still matches.
-  const [generatedText, setGeneratedText] = useState(draft.generated ? draft.rawText : undefined)
+  // The recording last unlinked, so it isn't linked again automatically.
+  const [unlinked, setUnlinked] = useState(draft.unlinked)
 
   const parsed = useMemo(() => parseWorkout(text, { speedUnit }), [text, speedUnit])
   const rpeValue = rpe ? Math.min(10, Math.max(1, Number(rpe))) : undefined
 
   // Recorded HR from the linked recording, lined up with the plan by the link's offset.
-  const recording = useLiveQuery(async () => {
+  const loaded = useLiveQuery(async () => {
     if (!link) return null
     const [rec, s] = await Promise.all([db.recordings.get(link.id), db.recordingStreams.get(link.id)])
     return rec ? { rec, streams: s } : null
   }, [link?.id])
+  // The query answers for the previous link until it re-runs.
+  const recording = loaded && loaded.rec.id === link?.id ? loaded : undefined
   useEnsureStreams(link ? [link.id] : [])
   const streams = recording?.streams?.hr && recording.streams.t.length ? recording.streams : undefined
   const offset = linkOffset(link)
-  const hr = streams ? { streams, offset } : undefined
   const hrByStep = useMemo(
-    () => (streams ? stepHr(stepWindows(parsed.blocks, sport, profile, rpeValue, offset), streams) : undefined),
+    () => (streams?.hr ? stepAverage(stepWindows(parsed.blocks, sport, profile, rpeValue, offset), streams.t, streams.hr) : undefined),
     [streams, parsed.blocks, sport, profile, rpeValue, offset],
   )
   const duration = totalText ? parseTotalTime(totalText) : undefined
@@ -97,8 +105,11 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
   const current = profileOf(settings)
   const profileIsCurrent = PROFILE_KEYS.every((k) => profile[k] === current[k])
 
-  // Structured edits rewrite the shorthand, which stays the source of truth.
-  const onBlocksChange = (blocks: Block[]) => setText(serializeBlocks(withSpeedUnit(blocks, speedUnit)))
+  // Structured edits rewrite the shorthand, which stays the source of truth. Text that didn't parse
+  // would be lost in the rewrite, so the table is read-only until it's fixed.
+  const onBlocksChange = (blocks: Block[]) => {
+    if (!hasErrors) setText(serializeBlocks(withSpeedUnit(blocks, speedUnit)))
+  }
 
   // Switching units rewrites existing speeds so their values don't change. With
   // unparseable text we can't rewrite safely, so only the reading of new input changes.
@@ -108,9 +119,10 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
     setSpeedUnit(u)
   }
 
-  const setThresholdPace = (v: string) => {
-    setPaceText(v)
-    setProfile({ ...profile, thresholdSpeed: parsePaceInput(v) })
+  // A recording from another day no longer belongs to this workout.
+  const changeDate = (d: string) => {
+    setDate(d)
+    if (link && recording && recording.rec.localDate !== d) setLink(undefined)
   }
 
   const detect = () => {
@@ -118,27 +130,45 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
     if (!detected) return
     if (recording.rec.sport === 'run') setSpeedUnit('pace')
     setText(detected.rawText)
-    setGeneratedText(detected.rawText)
   }
 
+  // One save at a time, so a double-click or a repeating ⌘↵ can't add the workout twice.
+  const saving = useRef(false)
+  const [busy, setBusy] = useState(false)
   const save = async () => {
-    await saveWorkout({
-      ...draft,
-      date,
-      sport,
-      title: title.trim() || undefined,
-      notes: normalizeNotes(notes),
-      rpe: rpeValue,
-      duration,
-      rawText: text.trim(),
-      blocks: parsed.blocks,
-      profile,
-      speedUnit,
-      recording: link,
-      generated: generatedText !== undefined && text.trim() === generatedText.trim() ? true : undefined,
-    })
-    onClose()
+    if (saving.current) return
+    saving.current = true
+    setBusy(true)
+    try {
+      await saveWorkout({
+        ...draft,
+        date,
+        sport,
+        title: title.trim() || undefined,
+        notes: normalizeNotes(notes),
+        rpe: rpeValue,
+        duration,
+        rawText: text.trim(),
+        blocks: parsed.blocks,
+        profile,
+        speedUnit,
+        recording: link,
+        unlinked,
+      })
+      onClose()
+    } finally {
+      saving.current = false
+      setBusy(false)
+    }
   }
+
+  // ⌘↵ in a table cell commits the cell as it blurs, but the edit only reaches `text` on the next render.
+  // So the shortcut asks for a save, which runs after that render.
+  const [saveRequests, setSaveRequests] = useState(0)
+  const saveLatest = useEffectEvent(() => void save())
+  useEffect(() => {
+    if (saveRequests) saveLatest()
+  }, [saveRequests])
 
   const remove = async () => {
     if (draft.id && confirm('Delete this workout?')) {
@@ -147,205 +177,169 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
     }
   }
 
-
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div
-        className="modal"
-        role="dialog"
-        aria-label={draft.id ? 'Edit workout' : 'Add workout'}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') onClose()
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) save()
-        }}
-      >
-        <header className="modal-head">
-          <h2>{draft.id ? 'Edit workout' : 'Add workout'}</h2>
-          <span className="meta">{fmtLongDate(date)}</span>
-        </header>
+    <Modal
+      label={draft.id ? 'Edit workout' : 'Add workout'}
+      onClose={onClose}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+          e.preventDefault()
+          setSaveRequests((n) => n + 1)
+        }
+      }}
+    >
+      <header className="modal-head">
+        <h2>{draft.id ? 'Edit workout' : 'Add workout'}</h2>
+        <span className="meta">{fmtLongDate(date)}</span>
+      </header>
 
-        <div className="form-row">
-          <label className="field">
-            <span>Date</span>
-            <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
-          </label>
-          <label className="field">
-            <span>Sport</span>
-            <select value={sport} onChange={(e) => setSport(e.target.value as Sport)}>
-              {SPORTS.map((s) => (
-                <option key={s} value={s}>
-                  {SPORT_LABEL[s]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field grow">
-            <span>Title</span>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} />
-          </label>
-          <label className="field narrow">
-            <span>RPE</span>
-            <input type="number" min={1} max={10} step={0.5} value={rpe} onChange={(e) => setRpe(e.target.value)} />
-          </label>
-          <label className="field">
-            <span>Total time</span>
-            <input
-              value={totalText}
-              onChange={(e) => setTotalText(e.target.value)}
-              placeholder={totals.duration ? fmtClock(totals.duration) : 'e.g. 65m'}
-              title="Optional. Covers time the structure doesn't describe."
-              style={{ width: 96 }}
-            />
-          </label>
-        </div>
-
-        <RecordingRow
-          date={date}
-          workoutId={draft.id}
-          link={link}
-          onChange={setLink}
-          hasHr={!!streams}
-          onDetect={recording && canDetect(recording.rec, recording.streams) ? detect : undefined}
-        />
-
-        <ShorthandInput
-          value={text}
-          onChange={setText}
-          highlights={parsed.highlights}
-          diagnostics={parsed.diagnostics}
-          speedUnit={speedUnit}
-          onSpeedUnit={changeSpeedUnit}
-          autoFocus={!draft.id}
-        />
-
-        <StatsRow totals={totals} sport={sport} speedUnit={speedUnit} />
-        {totals.unknownDuration > 0 && (
-          <p className="notice">
-            {totals.unknownDuration} step{totals.unknownDuration > 1 ? 's have' : ' has'} no duration. Add a speed or
-            pace so {totals.unknownDuration > 1 ? 'they count' : 'it counts'} toward time and zones.
-          </p>
-        )}
-        {needsThresholdPace(workout, profile) && (
-          <p className="notice">
-            No threshold pace for this workout, so speed-based zones fall back to step type and RPE. Set it in Settings,
-            or below for this workout only.
-          </p>
-        )}
-        <TimelineBar
-          blocks={parsed.blocks}
-          sport={sport}
-          profile={profile}
-          speedUnit={speedUnit}
-          rpe={rpeValue}
-          hr={hr}
-          stepHr={hrByStep}
-        />
-        <StepTable
-          blocks={parsed.blocks}
-          onChange={onBlocksChange}
-          sport={sport}
-          profile={profile}
-          speedUnit={speedUnit}
-          rpe={rpeValue}
-          stepHr={hrByStep}
-        />
-
-        <details className="thresholds">
-          <summary>
-            Thresholds for this workout: {profileSummary(profile)}
-            {!profileIsCurrent && <span className="warn"> (differs from Settings)</span>}
-          </summary>
-          <div className="form-row">
-            <label className="field">
-              <span>Threshold pace (min/km)</span>
-              <input value={paceText} onChange={(e) => setThresholdPace(e.target.value)} placeholder="4:15" />
-            </label>
-            <label className="field">
-              <span>FTP (W)</span>
-              <input
-                type="number"
-                value={profile.ftp ?? ''}
-                onChange={(e) => setProfile({ ...profile, ftp: optionalNumber(e.target.value) })}
-              />
-            </label>
-            <label className="field">
-              <span>Threshold HR</span>
-              <input
-                type="number"
-                value={profile.lthr ?? ''}
-                onChange={(e) => setProfile({ ...profile, lthr: optionalNumber(e.target.value) })}
-              />
-            </label>
-            <label className="field">
-              <span>Max HR</span>
-              <input
-                type="number"
-                value={profile.maxHr ?? ''}
-                onChange={(e) => setProfile({ ...profile, maxHr: optionalNumber(e.target.value) })}
-              />
-            </label>
-          </div>
-          {!profileIsCurrent && (
-            <button
-              type="button"
-              onClick={() => {
-                setProfile(current)
-                setPaceText(current.thresholdSpeed ? fmtPace(current.thresholdSpeed) : '')
-              }}
-            >
-              Use values from Settings
-            </button>
-          )}
-        </details>
-
-        <div className="field" style={{ marginTop: 12 }}>
-          <span>Notes</span>
-          <NotesEditor notes={notes} onChange={setNotes} />
-        </div>
-
-        <footer className="modal-actions">
-          {draft.id && (
-            <button className="danger" onClick={remove}>
-              Delete
-            </button>
-          )}
-          <span className="spacer" />
-          <button onClick={onClose}>Cancel</button>
-          <button className="primary" onClick={save} title={hasErrors ? 'Unrecognised text is kept but ignored' : '⌘↵'}>
-            Save
-          </button>
-        </footer>
+      <div className="form-row">
+        <label className="field">
+          <span>Date</span>
+          <input type="date" value={date} onChange={(e) => e.target.value && changeDate(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Sport</span>
+          <select value={sport} onChange={(e) => setSport(e.target.value as Sport)}>
+            {SPORTS.map((s) => (
+              <option key={s} value={s}>
+                {SPORT_LABEL[s]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field grow">
+          <span>Title</span>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} />
+        </label>
+        <label className="field narrow">
+          <span>RPE</span>
+          <input type="number" min={1} max={10} step={0.5} value={rpe} onChange={(e) => setRpe(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Total time</span>
+          <input
+            value={totalText}
+            onChange={(e) => setTotalText(e.target.value)}
+            placeholder={totals.duration ? fmtClock(totals.duration) : 'e.g. 65m'}
+            title="Optional. Covers time the structure doesn't describe."
+            style={{ width: 96 }}
+          />
+        </label>
       </div>
-    </div>
-  )
-}
 
-function fmtStart(r: Recording): string {
-  return new Date(r.startTime).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-}
+      <RecordingRow
+        date={date}
+        workoutId={draft.id}
+        link={link}
+        linked={recording?.rec}
+        onChange={(l) => {
+          if (!l && link) setUnlinked(link.id)
+          setLink(l)
+        }}
+        hasHr={!!streams}
+        onDetect={recording && canDetect(recording.rec, recording.streams) ? detect : undefined}
+      />
 
-/** Commits on blur or Enter; invalid text reverts. */
-function OffsetInput({ value, onChange }: { value: number; onChange: (secs: number) => void }) {
-  const [draft, setDraft] = useState(fmtOffset(value))
-  const [seen, setSeen] = useState(value)
-  if (seen !== value) {
-    setSeen(value)
-    setDraft(fmtOffset(value))
-  }
-  const commit = () => {
-    const secs = parseOffset(draft)
-    if (secs === undefined) setDraft(fmtOffset(value))
-    else if (secs !== value) onChange(secs)
-  }
-  return (
-    <input
-      value={draft}
-      aria-label="Plan starts at"
-      style={{ width: 64 }}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-    />
+      <ShorthandInput
+        value={text}
+        onChange={setText}
+        highlights={parsed.highlights}
+        diagnostics={parsed.diagnostics}
+        speedUnit={speedUnit}
+        onSpeedUnit={changeSpeedUnit}
+        autoFocus={!draft.id}
+      />
+
+      <StatsRow totals={totals} sport={sport} speedUnit={speedUnit} />
+      {totals.unknownDuration > 0 && (
+        <p className="notice">
+          {totals.unknownDuration} step{totals.unknownDuration > 1 ? 's have' : ' has'} no duration. Add a speed or
+          pace so {totals.unknownDuration > 1 ? 'they count' : 'it counts'} toward time and zones.
+        </p>
+      )}
+      {needsThresholdPace(workout, profile) && (
+        <p className="notice">
+          No threshold pace for this workout, so speed-based zones fall back to step type and RPE. Set it in Settings,
+          or below for this workout only.
+        </p>
+      )}
+      <TimelineBar
+        blocks={parsed.blocks}
+        sport={sport}
+        profile={profile}
+        speedUnit={speedUnit}
+        rpe={rpeValue}
+        recording={streams && { streams, offset }}
+        stepHr={hrByStep}
+      />
+      <StepTable
+        blocks={parsed.blocks}
+        onChange={onBlocksChange}
+        sport={sport}
+        profile={profile}
+        speedUnit={speedUnit}
+        rpe={rpeValue}
+        stepHr={hrByStep}
+        readOnly={hasErrors}
+      />
+      {hasErrors && parsed.blocks.length > 0 && (
+        <p className="help">
+          The table is read-only until the highlighted text is fixed, so editing it can&rsquo;t drop that text.
+        </p>
+      )}
+
+      <details className="thresholds">
+        <summary>
+          Thresholds for this workout: {profileSummary(profile, current)}
+          {!profileIsCurrent && <span className="warn"> (differs from Settings)</span>}
+        </summary>
+        <div className="form-row">
+          <ThresholdFields
+            profile={profile}
+            paceText={paceText}
+            onChange={(p, t) => {
+              setProfile(p)
+              setPaceText(t)
+            }}
+          />
+        </div>
+        {!profileIsCurrent && (
+          <button
+            type="button"
+            onClick={() => {
+              setProfile(current)
+              setPaceText(current.thresholdSpeed ? fmtPace(current.thresholdSpeed) : '')
+            }}
+          >
+            Use values from Settings
+          </button>
+        )}
+      </details>
+
+      <div className="field" style={{ marginTop: 12 }}>
+        <span>Notes</span>
+        <NotesEditor notes={notes} onChange={setNotes} />
+      </div>
+
+      <footer className="modal-actions">
+        {draft.id && (
+          <button className="danger" onClick={remove}>
+            Delete
+          </button>
+        )}
+        <span className="spacer" />
+        <button onClick={onClose}>Cancel</button>
+        <button
+          className="primary"
+          onClick={save}
+          disabled={busy}
+          title={hasErrors ? 'Unrecognised text is kept but ignored' : '⌘↵'}
+        >
+          Save
+        </button>
+      </footer>
+    </Modal>
   )
 }
 
@@ -354,6 +348,7 @@ function RecordingRow({
   date,
   workoutId,
   link,
+  linked,
   onChange,
   hasHr,
   onDetect,
@@ -361,11 +356,12 @@ function RecordingRow({
   date: string
   workoutId?: string
   link?: RecordingLink
+  /** The linked recording, once loaded. */
+  linked?: Recording
   onChange: (link: RecordingLink | undefined) => void
   hasHr: boolean
   onDetect?: () => void
 }) {
-  const linked = useLiveQuery(() => (link ? db.recordings.get(link.id) : undefined), [link?.id])
   const available = useLiveQuery(async () => {
     const [recordings, workouts] = await Promise.all([
       db.recordings.where('localDate').equals(date).sortBy('startTime'),
@@ -376,28 +372,20 @@ function RecordingRow({
   }, [date, workoutId])
 
   if (link && linked) {
-    const hr = [linked.avgHr && `avg HR ${Math.round(linked.avgHr)}`, linked.maxHr && `max ${Math.round(linked.maxHr)}`]
-      .filter(Boolean)
-      .join(' / ')
+    const offset = linkOffset(link)
     return (
-      <div className="recording-row">
-        <span className="label">Recording</span>
-        <span>
-          <strong>{linked.name ?? linked.rawSport}</strong> · {fmtStart(linked)} · {fmtClock(linked.elapsed)}
-          {hr && ` · ${hr}`}
-          {link.linkedBy === 'auto' && <span className="meta"> · linked automatically</span>}
-        </span>
-        {linked.stravaId && (
-          <a href={`https://www.strava.com/activities/${linked.stravaId}`} target="_blank" rel="noreferrer">
-            Strava ↗
-          </a>
-        )}
+      <RecordingSummary recording={linked} note={link.linkedBy === 'auto' ? 'linked automatically' : undefined}>
         {hasHr && (
           <label className="inline-field" title="Time into the recording where step 1 starts: seconds or m:ss">
             Plan starts at
-            <OffsetInput
-              value={linkOffset(link)}
-              onChange={(offset) => onChange({ ...link, alignment: { method: 'offset', offset } })}
+            <CommitInput
+              aria-label="Plan starts at"
+              style={{ width: 64 }}
+              value={fmtOffset(offset)}
+              onCommit={(v) => {
+                const secs = parseOffset(v)
+                if (secs !== undefined && secs !== offset) onChange({ ...link, offset: secs })
+              }}
             />
           </label>
         )}
@@ -407,7 +395,7 @@ function RecordingRow({
           </button>
         )}
         <button onClick={() => onChange(undefined)}>Unlink</button>
-      </div>
+      </RecordingSummary>
     )
   }
   if (!available?.length) return null
@@ -417,10 +405,7 @@ function RecordingRow({
       <select
         value=""
         aria-label="Link a recording"
-        onChange={(e) =>
-          e.target.value &&
-          onChange({ id: e.target.value, linkedBy: 'manual', alignment: { method: 'offset', offset: 0 } })
-        }
+        onChange={(e) => e.target.value && onChange(newLink(e.target.value, 'manual'))}
       >
         <option value="">Link a recording from this day…</option>
         {available.map((r) => (

@@ -3,12 +3,12 @@
 import { liveQuery } from 'dexie'
 import { clearLocalData, db } from '../db/db'
 import { supabase } from '../supabase'
-import { LOCAL_TABLE, normalizeDoc, SERVER_TABLE, type Doc } from './docs'
-import { SYNCED_TABLES, withoutOutbox } from './outbox'
-import { streamPath, supabaseStreamStore, uploadStreams, type StreamStore } from './streams'
+import { SYNCED_TABLES, withoutOutbox, type SyncedTable } from './outbox'
+import { LOCAL_TABLE, SERVER_TABLES, type Doc, type Row } from './rows'
 
+/** An object as the server has it. `table` is the Dexie table name. */
 export interface RemoteRow {
-  table: string
+  table: SyncedTable
   key: string
   doc: Doc | null
   deleted: boolean
@@ -16,7 +16,7 @@ export interface RemoteRow {
 }
 
 export interface Change {
-  table: string
+  table: SyncedTable
   key: string
   doc: Doc | null
   deleted: boolean
@@ -26,28 +26,49 @@ export interface Change {
 /** The server side of sync. Supabase in the app; a fake in tests. */
 export interface Remote {
   /** Applies changes; returns the ones the server already had a newer version of. */
-  push(changes: Change[]): Promise<{ table: string; key: string }[]>
+  push(changes: Change[]): Promise<{ table: SyncedTable; key: string }[]>
   /** Changes after `since`, in rev order. */
   pull(since: number, limit: number): Promise<RemoteRow[]>
   /** The server's current rows for some keys. */
-  fetch(table: string, keys: string[]): Promise<RemoteRow[]>
+  fetch(table: SyncedTable, keys: string[]): Promise<RemoteRow[]>
+}
+
+interface ServerRow {
+  table: string
+  key: string
+  row: Row
+  deleted: boolean
+  rev: number
+}
+
+const fromServer = (r: ServerRow): RemoteRow => {
+  const table = LOCAL_TABLE[r.table]
+  return { table, key: r.key, doc: r.deleted ? null : SERVER_TABLES[table].fromRow(r.row), deleted: r.deleted, rev: r.rev }
 }
 
 export const supabaseRemote: Remote = {
   async push(changes) {
-    const { data, error } = await supabase.rpc('sync_push', { changes })
+    const rows = changes.map((c) => {
+      const t = SERVER_TABLES[c.table]
+      return { table: t.name, key: c.key, row: c.doc && t.toRow(c.doc), deleted: c.deleted, client_ts: c.client_ts }
+    })
+    const { data, error } = await supabase.rpc('sync_push', { changes: rows })
     if (error) throw error
-    return data as { table: string; key: string }[]
+    return (data as { table: string; key: string }[]).map((r) => ({ table: LOCAL_TABLE[r.table], key: r.key }))
   },
   async pull(since, limit) {
     const { data, error } = await supabase.rpc('sync_pull', { since, lim: limit })
     if (error) throw error
-    return data as RemoteRow[]
+    return (data as ServerRow[]).map(fromServer)
   },
   async fetch(table, keys) {
-    const { data, error } = await supabase.from(table).select('key, doc, deleted, rev').in('key', keys)
+    const t = SERVER_TABLES[table]
+    const query = supabase.from(t.name).select('*')
+    const { data, error } = await (t.key ? query.in(t.key, keys) : query)
     if (error) throw error
-    return (data as Omit<RemoteRow, 'table'>[]).map((r) => ({ ...r, table }))
+    return (data as (Row & { deleted: boolean; rev: number })[]).map((row) =>
+      fromServer({ table: t.name, key: t.key ? String(row[t.key]) : 'settings', row, deleted: row.deleted, rev: row.rev }),
+    )
   },
 }
 
@@ -58,20 +79,14 @@ const PULL_PAGE = 500
 export async function applyRemote(rows: RemoteRow[], cursor?: number) {
   await withoutOutbox(db, [...SYNCED_TABLES, 'recordingStreams', 'outbox', 'syncMeta'], async () => {
     for (const r of rows) {
-      const table = LOCAL_TABLE[r.table]
-      if (!table || (await db.outbox.get([table, r.key]))) continue
+      const { table } = r
+      if (!SYNCED_TABLES.includes(table) || (await db.outbox.get([table, r.key]))) continue
       if (r.deleted || !r.doc) {
         await db.table(table).delete(r.key)
         if (table === 'recordings') await db.recordingStreams.delete(r.key)
         continue
       }
-      const doc = normalizeDoc(table, r.doc)
-      if (table === 'recordings' && typeof doc.stravaId === 'number') {
-        // stravaId is unique locally; the server's row for the activity replaces any other local one.
-        const clash = await db.recordings.where('stravaId').equals(doc.stravaId).first()
-        if (clash && clash.id !== r.key) await db.recordings.delete(clash.id)
-      }
-      await db.table(table).put(doc)
+      await db.table(table).put(r.doc)
     }
     if (cursor !== undefined) await db.syncMeta.update('sync', { cursor })
   })
@@ -84,7 +99,7 @@ async function pushBatch(remote: Remote): Promise<number> {
     const changes = await Promise.all(
       entries.map(async (e): Promise<Change> => {
         const row = (await db.table(e.table).get(e.key)) as Doc | undefined
-        return { table: SERVER_TABLE[e.table], key: e.key, doc: row ?? null, deleted: !row, client_ts: e.ts }
+        return { table: e.table, key: e.key, doc: row ?? null, deleted: !row, client_ts: e.ts }
       }),
     )
     return { entries, changes }
@@ -92,10 +107,6 @@ async function pushBatch(remote: Remote): Promise<number> {
   if (!entries.length) return 0
 
   const rejected = await remote.push(changes)
-  // Deleted recordings take their streams with them. Best effort: an orphaned object only costs storage.
-  const owner = (await db.syncMeta.get('sync'))?.owner
-  const gone = changes.filter((c) => c.table === SERVER_TABLE.recordings && c.deleted)
-  if (streams && owner && gone.length) await streams.remove(gone.map((c) => streamPath(owner, c.key))).catch(() => undefined)
   // Drop entries that weren't written again while the push was in flight.
   await db.transaction('rw', db.outbox, async () => {
     for (const e of entries) {
@@ -105,7 +116,7 @@ async function pushBatch(remote: Remote): Promise<number> {
   })
   // The server has newer versions of these. Their revs may be behind the cursor (a pull skipped them while
   // they were pending here), so fetch them directly.
-  const byTable = new Map<string, string[]>()
+  const byTable = new Map<SyncedTable, string[]>()
   for (const r of rejected) byTable.set(r.table, [...(byTable.get(r.table) ?? []), r.key])
   for (const [table, keys] of byTable) await applyRemote(await remote.fetch(table, keys))
   return entries.length
@@ -160,7 +171,6 @@ export const syncStatus = {
 // Running.
 
 let remote: Remote = supabaseRemote
-let streams: StreamStore | undefined
 let running: Promise<void> | null = null
 let again = false
 
@@ -177,7 +187,6 @@ export function syncNow(): Promise<void> {
         again = false
         await push(remote)
         await pull(remote)
-        if (streams) await uploadStreams(streams)
       } while (again)
       const now = Date.now()
       await db.syncMeta.update('sync', { lastSyncedAt: now })
@@ -200,9 +209,8 @@ export function whenReady() {
 }
 
 /** Starts syncing. Call `adoptOwner` for the signed-in user first. Returns a function that stops it. */
-export function startSync(using: Remote = supabaseRemote, streamStore: StreamStore = supabaseStreamStore): () => void {
+export function startSync(using: Remote = supabaseRemote): () => void {
   remote = using
-  streams = streamStore
   let timer: ReturnType<typeof setTimeout> | undefined
   const schedule = () => {
     clearTimeout(timer)

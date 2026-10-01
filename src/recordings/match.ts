@@ -1,8 +1,13 @@
 // Pairing recorded activities with logged workouts. Pure functions.
-import type { Recording, Sport, Workout } from '../model/types'
+import type { Recording, RecordingLink, Sport, Workout } from '../model/types'
+
+/** A new link to a recording, with the plan starting where the recording does. */
+export function newLink(id: string, linkedBy: RecordingLink['linkedBy']): RecordingLink {
+  return { id, linkedBy, offset: 0 }
+}
 
 /** Watches often record treadmill runs as ordinary runs, so those two can pair up. */
-export function sportsCompatible(workout: Sport, recording: Sport): boolean {
+function sportsCompatible(workout: Sport, recording: Sport): boolean {
   if (workout === recording) return true
   const running = new Set<Sport>(['run', 'treadmill'])
   return running.has(workout) && running.has(recording)
@@ -26,7 +31,8 @@ function clearBest(list: Candidate[]): Candidate | undefined {
 /**
  * Workout–recording pairs to link automatically: same date, compatible sport,
  * and each is the other's clear best match by duration. Workouts that already
- * have a recording, and recordings already linked, are left alone.
+ * have a recording, recordings already linked, and pairs the user unlinked are
+ * left alone.
  *
  * `durationOf` gives a workout's planned duration in seconds (0 if unknown).
  */
@@ -42,7 +48,7 @@ export function autoLinks(
     if (w.recording) continue
     const planned = durationOf(w)
     for (const r of free) {
-      if (r.localDate !== w.date || !sportsCompatible(w.sport, r.sport)) continue
+      if (r.localDate !== w.date || r.id === w.unlinked || !sportsCompatible(w.sport, r.sport)) continue
       candidates.push({ workoutId: w.id, recordingId: r.id, score: planned ? Math.abs(planned - r.elapsed) : 0 })
     }
   }
@@ -54,10 +60,4 @@ export function autoLinks(
     if (reverse?.workoutId === w) links.push({ workoutId: w, recordingId: best.recordingId })
   }
   return links
-}
-
-/** A recording from another source (e.g. a FIT import) that is the same activity. */
-export function findSameActivity(recordings: Recording[], startTime: string, withinSeconds = 60): Recording | undefined {
-  const t = Date.parse(startTime)
-  return recordings.find((r) => Math.abs(Date.parse(r.startTime) - t) <= withinSeconds * 1000)
 }

@@ -5,11 +5,12 @@ import { addDays, fmtWeekRange, isoWeek, today, weekStart } from './metrics/date
 import { acuteChronicRatio, summarizeWeeks } from './metrics/week'
 import { DEFAULT_SETTINGS, profileOf, type Recording, type RecordingStreams, type Workout } from './model/types'
 import { autoLogRecordings, detectText } from './recordings/autolog'
+import { newLink } from './recordings/match'
 import { fillRecordedSummaries } from './recordings/recorded'
 import { handleCallback } from './strava/auth'
+import { useEnsureStreams } from './strava/useStreams'
 import { useWeekSync } from './strava/useWeekSync'
 import { whenReady } from './sync/engine'
-import { useEnsureStreams } from './sync/useStreams'
 import { useSyncStatus } from './sync/useSyncStatus'
 import { WorkoutEditor, type Draft } from './ui/entry/WorkoutEditor'
 import { ActivityViewer } from './ui/view/ActivityViewer'
@@ -95,12 +96,17 @@ export default function App() {
   const sync = useWeekSync(start, ready && !!strava)
   const account = useSyncStatus()
 
-  const weeks = summarizeWeeks(start, TREND_WEEKS, workouts ?? [], settings, recordings ?? [])
+  const weeks = useMemo(
+    () => summarizeWeeks(start, TREND_WEEKS, workouts ?? [], settings, recordings ?? []),
+    [start, workouts, settings, recordings],
+  )
   const weekWorkouts = useMemo(() => (workouts ?? []).filter((w) => w.date >= start), [workouts, start])
   const weekRecordings = useMemo(() => (recordings ?? []).filter((r) => r.localDate >= start), [recordings, start])
   const isThisWeek = start === weekStart(today())
   const isFuture = start > weekStart(today())
   const viewing = viewingId ? workouts?.find((w) => w.id === viewingId) : undefined
+  // Close the viewer once its workout is gone: deleted, or moved out of these weeks by an edit.
+  if (viewingId && workouts && !viewing) setViewingId(null)
   // Per-sample data for this week's recordings, for the timelines.
   const recordingIds = [
     ...new Set([...weekWorkouts.flatMap((w) => (w.recording ? [w.recording.id] : [])), ...weekRecordings.map((r) => r.id)]),
@@ -114,15 +120,18 @@ export default function App() {
   const addOn = (date: string) => setEditing({ date, sport: lastSport ?? 'run' })
   const open = (w: Workout) => setViewingId(w.id)
   const logRecording = async (r: Recording) => {
-    const detected = detectText(r, await db.recordingStreams.get(r.id), profileOf(settings))
+    // Zoned with the thresholds of the time, if the recording has them.
+    const profile = r.profile ?? profileOf(settings)
+    const detected = detectText(r, await db.recordingStreams.get(r.id), profile)
     setEditing({
       date: r.localDate,
       sport: r.sport,
       title: r.name,
+      profile,
       ...(detected
-        ? { rawText: detected.rawText, blocks: detected.blocks, generated: true, speedUnit: r.sport === 'run' ? 'pace' : undefined }
+        ? { rawText: detected.rawText, blocks: detected.blocks, speedUnit: r.sport === 'run' ? 'pace' : undefined }
         : { duration: r.moving ?? r.elapsed }),
-      recording: { id: r.id, linkedBy: 'manual', alignment: { method: 'offset', offset: 0 } },
+      recording: newLink(r.id, 'manual'),
     })
   }
 
@@ -149,7 +158,7 @@ export default function App() {
           {account.syncing
             ? 'Saving…'
             : account.pending && account.error
-              ? `Offline, ${account.pending} unsaved`
+              ? `${navigator.onLine ? 'Sync failed' : 'Offline'}, ${account.pending} unsaved`
               : account.lastSyncedAt
                 ? `Saved ${ago(account.lastSyncedAt)}`
                 : ''}

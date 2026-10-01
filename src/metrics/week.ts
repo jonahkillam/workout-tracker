@@ -12,7 +12,7 @@ export interface WeekSummary {
 }
 
 /** Recordings that no workout links to: unstructured activities, counted as sessions of their own. */
-export function unlinkedRecordings(workouts: Workout[], recordings: Recording[]): Recording[] {
+function unlinkedRecordings(workouts: Workout[], recordings: Recording[]): Recording[] {
   const linked = new Set(workouts.map((w) => w.recording?.id).filter(Boolean))
   return recordings.filter((r) => !linked.has(r.id))
 }
@@ -21,7 +21,7 @@ export function unlinkedRecordings(workouts: Workout[], recordings: Recording[])
  * Totals for the week. Workouts count from their recording where it measures
  * them properly (see `sessionTotals`); unlinked recordings count as recorded.
  */
-export function summarizeWeek(
+function summarizeWeek(
   start: string,
   workouts: Workout[],
   fallback: Profile,
