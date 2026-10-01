@@ -199,10 +199,17 @@ code {
 
 /* ---------- Layout ---------- */
 
+/* The env() insets keep content clear of a phone's notch and home indicator (viewport-fit=cover). */
 .app {
   max-width: 1180px;
   margin: 0 auto;
-  padding: 12px 16px 40px;
+  padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
+    calc(40px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+}
+
+/* Shown only at phone width; `.wide-only` is the opposite. */
+.narrow-only {
+  display: none;
 }
 
 .toolbar {
@@ -415,16 +422,42 @@ table.week a:hover {
 
 @media (max-width: 700px) {
   .app {
-    padding: 8px 8px 32px;
+    padding: calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right))
+      calc(32px + env(safe-area-inset-bottom)) calc(8px + env(safe-area-inset-left));
   }
+  .wide-only {
+    display: none;
+  }
+  .narrow-only {
+    display: revert;
+  }
+  /* Two rows: the week and its navigation, then status on the left and actions on the right. */
   .toolbar {
     flex-wrap: wrap;
+    gap: 6px;
   }
+  .toolbar .logo {
+    display: none;
+  }
+  .toolbar h1 {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    margin-right: 0;
+    font-size: 15px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .toolbar .spacer {
+    flex: none;
+    width: 100%;
+  }
+  .toolbar .spacer + .sync-status {
+    margin-right: auto;
+  }
+  /* The number columns are hidden; each session shows them as a line under its headline instead. */
   table.week {
     table-layout: auto;
-  }
-  table.week .wide-only {
-    display: none;
   }
   td.detail .headline.main-set {
     font-size: 12.5px;
@@ -432,12 +465,15 @@ table.week a:hover {
   table.week .c-day {
     width: 52px;
   }
-  table.week .c-n,
-  table.week .c-hr {
-    width: 40px;
+  td.day .dom {
+    white-space: nowrap;
   }
   table.week td {
     padding: 6px 5px;
+  }
+  table.week tfoot .totals {
+    color: var(--text);
+    font-weight: 600;
   }
 }
 
@@ -574,12 +610,6 @@ table.week a:hover {
 }
 
 @media (max-width: 700px) {
-  .modal-backdrop:has(.calc) {
-    padding: 8px;
-  }
-  .calc {
-    padding: 12px;
-  }
   .calc .stats-row {
     gap: 6px 16px;
   }
@@ -661,6 +691,67 @@ table.week a:hover {
 
 .field.narrow input {
   width: 60px;
+}
+
+/* Phones: dialogs fill the screen, with the heading and the actions pinned while the rest scrolls. */
+@media (max-width: 700px) {
+  body:has(.modal-backdrop) {
+    overflow: hidden;
+  }
+  .modal-backdrop {
+    padding: 0;
+  }
+  .modal,
+  .modal.narrow {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 100dvh;
+    padding: 0 calc(12px + env(safe-area-inset-right)) 0 calc(12px + env(safe-area-inset-left));
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .modal > * {
+    flex: none;
+  }
+  .modal-head,
+  .modal-actions {
+    position: sticky;
+    z-index: 2;
+    margin-left: -12px;
+    margin-right: -12px;
+    background: var(--bg);
+  }
+  .modal-head {
+    top: 0;
+    padding: calc(10px + env(safe-area-inset-top)) 12px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-actions {
+    bottom: 0;
+    margin-top: auto;
+    padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  }
+  /* Two fields to a row, each as wide as its half. */
+  .form-row .field {
+    flex: 1 1 40%;
+    min-width: 0;
+  }
+  .form-row .field.grow {
+    flex-basis: 100%;
+  }
+  .form-row .field input,
+  .form-row .field select {
+    width: 100%;
+  }
+  /* Keeps the fields wide enough to read and edit; the table scrolls sideways. */
+  .steps select {
+    min-width: 104px;
+  }
+  .steps input:not([type='checkbox']) {
+    min-width: 76px;
+  }
 }
 
 .recording-row {
@@ -1169,7 +1260,7 @@ fieldset.step-table {
 
 /* Sign-in */
 .signin-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -1311,4 +1402,71 @@ fieldset.step-table {
   text-align: center;
   font-size: 12px;
   color: var(--text-3);
+}
+
+/* ---------- Touch ---------- */
+
+/* Nothing hovers on a touch screen, so the per-day add button is always shown. */
+@media (hover: none) {
+  td.day .add {
+    opacity: 1;
+    padding: 6px 0;
+  }
+}
+
+@media (pointer: coarse) {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button,
+  label.button {
+    touch-action: manipulation;
+  }
+
+  /* iOS zooms the page when a field under 16px takes focus. */
+  input,
+  select,
+  textarea,
+  .shorthand,
+  .steps input,
+  .recording-row .inline-field input {
+    font-size: 16px;
+  }
+
+  button,
+  label.button,
+  input,
+  select,
+  .signin-card input,
+  .signin-card button.primary {
+    height: 36px;
+  }
+
+  .btn-group button {
+    width: 40px;
+  }
+
+  button.icon {
+    height: 32px;
+    min-width: 32px;
+    justify-content: center;
+  }
+
+  .segmented button,
+  .chart-bar button,
+  .recording-row button,
+  .recording-row .inline-field input,
+  .row-actions > button:not(.icon),
+  .steps input,
+  .steps select {
+    height: 32px;
+  }
+}
+
+/* Installed to the home screen: don't rubber-band like a web page. */
+@media (display-mode: standalone) {
+  body {
+    overscroll-behavior-y: none;
+  }
 }

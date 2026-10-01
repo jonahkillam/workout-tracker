@@ -33,13 +33,26 @@ type Cells = Pick<Totals, 'duration' | 'distance' | 'vertical' | 'load'> & { hr?
 function NumberCells({ t, stair }: { t: Cells; stair?: boolean }) {
   return (
     <>
-      <td className="num">{t.duration ? fmtHours(t.duration) : '—'}</td>
+      <td className="num wide-only">{t.duration ? fmtHours(t.duration) : '—'}</td>
       <td className="num wide-only">{stair || !t.distance ? '—' : num(t.distance / 1000, 1)}</td>
       <td className="num wide-only">{t.vertical >= 1 ? Math.round(t.vertical).toLocaleString() : '—'}</td>
-      <td className="num">{t.hr ? Math.round(t.hr) : '—'}</td>
-      <td className="num">{t.load ? Math.round(t.load) : '—'}</td>
+      <td className="num wide-only">{t.hr ? Math.round(t.hr) : '—'}</td>
+      <td className="num wide-only">{t.load ? Math.round(t.load) : '—'}</td>
     </>
   )
+}
+
+/** The number columns as one line, for narrow screens where those columns are hidden. */
+function numbersLine(t: Cells, stair?: boolean): string {
+  return [
+    t.duration > 0 && fmtHours(t.duration),
+    !stair && t.distance > 0 && `${num(t.distance / 1000, 1)} km`,
+    t.vertical >= 1 && `↑${Math.round(t.vertical).toLocaleString()} m`,
+    t.hr && `${Math.round(t.hr)} bpm`,
+    t.load > 0 && `load ${Math.round(t.load)}`,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 /** Effort series by streams row, with the inputs they were worked out from. */
@@ -97,7 +110,8 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
         <tr key={date} className="day-start empty-day">
           {dayCell}
           <td className="wide-only" />
-          <td colSpan={6} />
+          <td />
+          <td className="wide-only" colSpan={5} />
         </tr>,
       )
       continue
@@ -106,7 +120,7 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
     sessions.forEach((w, i) => {
       const profile = w.profile ?? settings
       const rec = w.recording ? byId.get(w.recording.id) : undefined
-      const t = sessionTotals(w, rec, settings)
+      const t = { ...sessionTotals(w, rec, settings), hr: rec?.avgHr }
       const recStreams = w.recording && streams.get(w.recording.id)
       const mainSet = mainSetSummary(w.blocks, w.speedUnit ?? settings.speedUnit)
       const subline = [mainSet && w.title, w.rpe !== undefined && `RPE ${w.rpe}`].filter(Boolean) as string[]
@@ -125,6 +139,9 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
             >
               {mainSet || w.title || 'Untitled'}
             </button>
+            <div className="subline narrow-only">
+              {SPORT_LABEL[w.sport]} · {numbersLine(t, w.sport === 'stair')}
+            </div>
             {(subline.length > 0 || url) && (
               <div className="subline">
                 {subline.join(' · ')}
@@ -150,7 +167,7 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
             />
             {w.notes?.length ? <NoteLines notes={w.notes} clamp /> : null}
           </td>
-          <NumberCells t={{ ...t, hr: rec?.avgHr }} stair={w.sport === 'stair'} />
+          <NumberCells t={t} stair={w.sport === 'stair'} />
         </tr>,
       )
     })
@@ -160,12 +177,16 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
       const url = stravaUrl(r)
       const recStreams = streams.get(r.id)
       const average = recordedAverage(r, settings.speedUnit)
+      const t = { ...recordedTotals(r, r.sport, r.profile ?? settings), hr: r.avgHr }
       rows.push(
         <tr key={r.id} className={`unstructured${first ? ' day-start' : ''}`}>
           {first && dayCell}
           <td className="sport wide-only">{SPORT_LABEL[r.sport]}</td>
           <td className="detail">
             <span className="headline">{r.name ?? r.rawSport}</span>
+            <div className="subline narrow-only">
+              {SPORT_LABEL[r.sport]} · {numbersLine(t, r.sport === 'stair')}
+            </div>
             <div className="subline">
               Unstructured{average && ` · ${average}`} ·{' '}
               <button className="link" onClick={() => onLogRecording(r)}>
@@ -192,7 +213,7 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
               />
             )}
           </td>
-          <NumberCells t={{ ...recordedTotals(r, r.sport, r.profile ?? settings), hr: r.avgHr }} stair={r.sport === 'stair'} />
+          <NumberCells t={t} stair={r.sport === 'stair'} />
         </tr>,
       )
     })
@@ -207,13 +228,13 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
           <th className="c-day">Day</th>
           <th className="c-sport wide-only">Sport</th>
           <th>Session</th>
-          <th className="num c-n">Time</th>
+          <th className="num c-n wide-only">Time</th>
           <th className="num c-n wide-only">km</th>
           <th className="num c-n wide-only">Climb m</th>
-          <th className="num c-hr" title="Average heart rate from the recording">
+          <th className="num c-hr wide-only" title="Average heart rate from the recording">
             HR
           </th>
-          <th className="num c-n">Load</th>
+          <th className="num c-n wide-only">Load</th>
         </tr>
       </thead>
       <tbody>{rows}</tbody>
@@ -230,6 +251,7 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
                   <span className="meta">
                     · {t.count} session{t.count === 1 ? '' : 's'}
                   </span>
+                  <div className="narrow-only">{numbersLine(t, s === 'stair')}</div>
                 </td>
                 <NumberCells t={t} stair={s === 'stair'} />
               </tr>
@@ -246,6 +268,7 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
                 · load {num(acwr)}× 4-wk avg
               </span>
             )}
+            <div className="totals narrow-only">{numbersLine(summary.total)}</div>
           </td>
           <NumberCells t={summary.total} />
         </tr>

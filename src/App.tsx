@@ -166,17 +166,28 @@ export default function App() {
         {strava && (
           <span className="sync-status">
             <span className="meta">
-              {sync.syncing ? 'Syncing Strava…' : lastFetch ? `Strava synced ${ago(lastFetch.fetchedAt)}` : 'Strava'}
+              {sync.syncing ? (
+                'Syncing Strava…'
+              ) : lastFetch ? (
+                <>
+                  Strava <span className="wide-only">synced </span>
+                  {ago(lastFetch.fetchedAt)}
+                </>
+              ) : (
+                'Strava'
+              )}
             </span>
             <button className="icon" onClick={sync.refresh} disabled={sync.syncing || isFuture} title="Refresh from Strava">
               ⟳
             </button>
           </span>
         )}
-        <button onClick={() => setShowGap(true)}>GAP calculator</button>
+        <button onClick={() => setShowGap(true)}>
+          GAP<span className="wide-only"> calculator</span>
+        </button>
         <button onClick={() => setShowSettings(true)}>Settings</button>
         <button className="primary" onClick={() => addOn(isThisWeek ? today() : start)}>
-          + Add workout
+          + Add<span className="wide-only"> workout</span>
         </button>
       </header>
 
