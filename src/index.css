@@ -205,6 +205,8 @@ code {
   margin: 0 auto;
   padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right))
     calc(40px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left));
+  /* The week slides sideways when it changes; don't let that widen the page. */
+  overflow-x: clip;
 }
 
 /* Shown only at phone width; `.wide-only` is the opposite. */
@@ -317,27 +319,6 @@ td.day .dom {
 
 td.day.today .dow,
 td.day.today .dom {
-  color: var(--link);
-}
-
-/* Transparent rather than hidden, so it stays in the tab order. */
-td.day .add {
-  margin-top: 4px;
-  font-size: 12px;
-  opacity: 0;
-}
-
-tr:hover td.day .add,
-td.day .add:focus-visible,
-tr.empty-day td.day .add {
-  opacity: 1;
-}
-
-tr.empty-day td.day .add {
-  color: var(--text-3);
-}
-
-tr.empty-day:hover td.day .add {
   color: var(--link);
 }
 
@@ -1555,12 +1536,8 @@ fieldset.step-table {
 
 /* ---------- Touch ---------- */
 
-/* Nothing hovers on a touch screen, so the per-day add button is always shown. */
+/* Nothing hovers on a touch screen. */
 @media (hover: none) {
-  td.day .add {
-    opacity: 1;
-    padding: 6px 0;
-  }
   .hover-only {
     display: none;
   }

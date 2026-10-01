@@ -1,5 +1,5 @@
 import { useLiveQuery } from 'dexie-react-hooks'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { db } from './db/db'
 import { addDays, fmtWeekRange, isoWeek, today, weekStart } from './metrics/dates'
 import { acuteChronicRatio, summarizeWeeks } from './metrics/week'
@@ -60,6 +60,32 @@ export default function App() {
     })()
   }, [])
 
+  // Changing week slides the old one out, then the new one in once its data has loaded (below).
+  const slideRef = useRef<HTMLDivElement>(null)
+  const sliding = useRef<-1 | 0 | 1>(0)
+  const goTo = (to: string) => {
+    if (to === start) return
+    const el = slideRef.current
+    // Switch at once if a slide is already running, or the user prefers reduced motion.
+    if (!el || sliding.current || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return setStart(to)
+    const dir = to > start ? 1 : -1
+    sliding.current = dir
+    el.animate(
+      [
+        { transform: 'none', opacity: 1 },
+        { transform: `translateX(${-32 * dir}px)`, opacity: 0 },
+      ],
+      { duration: 110, easing: 'ease-in', fill: 'forwards' },
+    ).finished.then(
+      () => setStart(to),
+      () => {}, // cancelled by a later change
+    )
+  }
+  const step = useRef((_days: number) => {})
+  useEffect(() => {
+    step.current = (days) => goTo(addDays(start, days))
+  })
+
   // ← / → move between weeks, unless a dialog is open or a field has focus.
   const overlayOpen = !!editing || !!viewingId || showSettings || showGap
   useEffect(() => {
@@ -68,16 +94,16 @@ export default function App() {
       if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
       const t = e.target as HTMLElement | null
       if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return
-      const step = e.key === 'ArrowLeft' ? -7 : e.key === 'ArrowRight' ? 7 : 0
-      if (!step) return
+      const days = e.key === 'ArrowLeft' ? -7 : e.key === 'ArrowRight' ? 7 : 0
+      if (!days) return
       e.preventDefault()
-      setStart((s) => addDays(s, step))
+      step.current(days)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [overlayOpen])
   // On touch screens, so do sideways swipes.
-  useSwipe((dir) => setStart((s) => addDays(s, 7 * dir)), !overlayOpen)
+  useSwipe((dir) => step.current(7 * dir), !overlayOpen)
 
   // null once loaded with nothing saved; undefined while loading.
   const stored = useLiveQuery(async () => (await db.settings.get('settings')) ?? null, [])
@@ -86,16 +112,33 @@ export default function App() {
 
   const trendFrom = addDays(start, -7 * (TREND_WEEKS - 1))
   const weekEnd = addDays(start, 6)
-  const workouts = useLiveQuery(
-    () => db.workouts.where('date').between(trendFrom, weekEnd, true, true).toArray(),
-    [trendFrom, weekEnd],
+  // Tagged with its week: until a new week's query resolves, this still holds the previous week's rows.
+  const data = useLiveQuery(
+    async () => ({
+      start,
+      workouts: await db.workouts.where('date').between(trendFrom, weekEnd, true, true).toArray(),
+      recordings: await db.recordings.where('localDate').between(trendFrom, weekEnd, true, true).sortBy('startTime'),
+    }),
+    [start, trendFrom, weekEnd],
   )
-  const recordings = useLiveQuery(
-    () => db.recordings.where('localDate').between(trendFrom, weekEnd, true, true).sortBy('startTime'),
-    [trendFrom, weekEnd],
-  )
+  const workouts = data?.workouts
+  const recordings = data?.recordings
+  const loaded = data?.start === start
+  useLayoutEffect(() => {
+    const el = slideRef.current
+    const dir = sliding.current
+    if (!el || !dir || !loaded) return
+    sliding.current = 0
+    el.getAnimations().forEach((a) => a.cancel())
+    el.animate(
+      [
+        { transform: `translateX(${32 * dir}px)`, opacity: 0 },
+        { transform: 'none', opacity: 1 },
+      ],
+      { duration: 160, easing: 'ease-out' },
+    )
+  }, [loaded, start])
   const lastFetch = useLiveQuery(() => db.stravaWeekFetch.get(start), [start])
-  const lastSport = useLiveQuery(() => db.workouts.orderBy('updatedAt').last(), [])?.sport
   const sync = useWeekSync(start, ready && !!strava)
   const account = useSyncStatus()
 
@@ -120,7 +163,6 @@ export default function App() {
     return new Map(rows.flatMap((s): [string, RecordingStreams][] => (s ? [[s.recordingId, s]] : [])))
   }, [recordingIds.join()])
 
-  const addOn = (date: string) => setEditing({ date, sport: lastSport ?? 'run' })
   const open = (w: Workout) => setViewingId(w.id)
   const logRecording = async (r: Recording) => {
     // Zoned with the thresholds of the time, if the recording has them.
@@ -146,14 +188,14 @@ export default function App() {
           Week {isoWeek(start)} <span className="range">{fmtWeekRange(start)}</span>
         </h1>
         <div className="btn-group hover-only">
-          <button onClick={() => setStart(addDays(start, -7))} aria-label="Previous week">
+          <button onClick={() => goTo(addDays(start, -7))} aria-label="Previous week">
             ‹
           </button>
-          <button onClick={() => setStart(addDays(start, 7))} aria-label="Next week">
+          <button onClick={() => goTo(addDays(start, 7))} aria-label="Next week">
             ›
           </button>
         </div>
-        <button onClick={() => setStart(weekStart(today()))} disabled={isThisWeek}>
+        <button onClick={() => goTo(weekStart(today()))} disabled={isThisWeek}>
           Today
         </button>
         <span className="spacer" />
@@ -189,9 +231,6 @@ export default function App() {
           GAP<span className="wide-only"> calculator</span>
         </button>
         <button onClick={() => setShowSettings(true)}>Settings</button>
-        <button className="primary" onClick={() => addOn(isThisWeek ? today() : start)}>
-          + Add<span className="wide-only"> workout</span>
-        </button>
       </header>
 
       {connectError && (
@@ -215,19 +254,20 @@ export default function App() {
         </p>
       )}
 
-      <WeekTable
-        start={start}
-        workouts={weekWorkouts}
-        recordings={weekRecordings}
-        streams={streams ?? new Map()}
-        summary={weeks[weeks.length - 1]}
-        acwr={acuteChronicRatio(weeks)}
-        settings={settings}
-        onOpen={open}
-        onAdd={addOn}
-        onLogRecording={logRecording}
-      />
-      <WeekPanels weeks={weeks} onSelectWeek={setStart} />
+      <div ref={slideRef}>
+        <WeekTable
+          start={start}
+          workouts={weekWorkouts}
+          recordings={weekRecordings}
+          streams={streams ?? new Map()}
+          summary={weeks[weeks.length - 1]}
+          acwr={acuteChronicRatio(weeks)}
+          settings={settings}
+          onOpen={open}
+          onLogRecording={logRecording}
+        />
+        <WeekPanels weeks={weeks} onSelectWeek={goTo} />
+      </div>
 
       {viewing && !editing && (
         <ActivityViewer

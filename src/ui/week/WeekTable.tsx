@@ -24,7 +24,6 @@ interface Props {
   acwr?: number
   settings: Settings
   onOpen: (w: Workout) => void
-  onAdd: (date: string) => void
   onLogRecording: (r: Recording) => void
 }
 
@@ -78,7 +77,7 @@ function cachedEffort(
   return effort
 }
 
-export function WeekTable({ start, workouts, recordings, streams, summary, acwr, settings, onOpen, onAdd, onLogRecording }: Props) {
+export function WeekTable({ start, workouts, recordings, streams, summary, acwr, settings, onOpen, onLogRecording }: Props) {
   const now = today()
   const byId = new Map(recordings.map((r) => [r.id, r]))
   const linked = new Set(workouts.map((w) => w.recording?.id).filter(Boolean))
@@ -92,16 +91,6 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
       <td rowSpan={Math.max(1, span)} className={`day${date === now ? ' today' : ''}`}>
         <div className="dow">{weekday}</div>
         <div className="dom">{day}</div>
-        <button
-          className="link add"
-          onClick={(e) => {
-            e.stopPropagation()
-            onAdd(date)
-          }}
-          aria-label={`Add a workout on ${weekday} ${day}`}
-        >
-          + add
-        </button>
       </td>
     )
 
