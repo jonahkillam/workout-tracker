@@ -1,7 +1,9 @@
-import { useRef, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { SpeedUnit } from '../../model/types'
 import type { Diagnostic, Highlight } from '../../parser/parser'
+import { Sheet } from '../common/Sheet'
 import { SpeedUnitToggle } from '../common/SpeedUnitToggle'
+import { useNarrow } from '../common/useNarrow'
 
 interface Props {
   value: string
@@ -18,9 +20,33 @@ const PLACEHOLDER: Record<SpeedUnit, string> = {
   pace: '15m easy @ 5:45/km, 5x1km/2m @ 4:05-4:10/km, 10m cd',
 }
 
-/** Textarea with live token highlighting, drawn by a mirror element behind it. */
+/** Characters the shorthand leans on that sit behind a phone keyboard's symbol layers. */
+const SYMBOLS = ['x', '/', '//', '@', '%', ':', '-', '(', ')', ',']
+
+/**
+ * Textarea with live token highlighting, drawn by a mirror element behind it. At phone width the text
+ * is shown read-only and opens in a sheet to edit, with a row of buttons for the shorthand's symbols.
+ */
 export function ShorthandInput({ value, onChange, highlights, diagnostics, speedUnit, onSpeedUnit, autoFocus }: Props) {
   const mirror = useRef<HTMLDivElement>(null)
+  const area = useRef<HTMLTextAreaElement>(null)
+  const narrow = useNarrow()
+  // The text as it was when the sheet opened, for Cancel.
+  const [opened, setOpened] = useState<string | null>(null)
+
+  // Where to put the caret once an inserted symbol has rendered; a controlled textarea sends it to the end.
+  const caret = useRef<number | null>(null)
+  useLayoutEffect(() => {
+    if (caret.current === null) return
+    area.current?.setSelectionRange(caret.current, caret.current)
+    caret.current = null
+  }, [value])
+  const insert = (text: string) => {
+    const el = area.current
+    if (!el) return
+    caret.current = el.selectionStart + text.length
+    onChange(value.slice(0, el.selectionStart) + text + value.slice(el.selectionEnd))
+  }
 
   const classes: (string | undefined)[] = new Array(value.length)
   for (const h of highlights) for (let i = h.start; i < h.end; i++) classes[i] = `hl-${h.cls}`
@@ -36,39 +62,39 @@ export function ShorthandInput({ value, onChange, highlights, diagnostics, speed
     }
   }
 
-  return (
-    <div>
-      <div className="shorthand-bar">
-        <label htmlFor="shorthand">Workout</label>
-        <SpeedUnitToggle value={speedUnit} onChange={onSpeedUnit} />
+  const field = (focus?: boolean) => (
+    <div className="shorthand">
+      <div className="mirror" ref={mirror} aria-hidden>
+        {parts}
+        {'\n'}
       </div>
-      <div className="shorthand">
-        <div className="mirror" ref={mirror} aria-hidden>
-          {parts}
-          {'\n'}
-        </div>
-        <textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onScroll={(e) => {
-            if (mirror.current) mirror.current.scrollTop = e.currentTarget.scrollTop
-          }}
-          spellCheck={false}
-          autoFocus={autoFocus}
-          placeholder={PLACEHOLDER[speedUnit]}
-          id="shorthand"
-          aria-label="Workout shorthand"
-        />
-      </div>
-      {diagnostics.length > 0 && (
-        <ul className="diagnostics">
-          {diagnostics.map((d, i) => (
-            <li key={i} className={d.severity}>
-              <code>{value.slice(d.start, d.end)}</code> {d.message}
-            </li>
-          ))}
-        </ul>
-      )}
+      <textarea
+        ref={area}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onScroll={(e) => {
+          if (mirror.current) mirror.current.scrollTop = e.currentTarget.scrollTop
+        }}
+        spellCheck={false}
+        autoCapitalize="off"
+        autoCorrect="off"
+        autoFocus={focus}
+        placeholder={PLACEHOLDER[speedUnit]}
+        id="shorthand"
+        aria-label="Workout shorthand"
+      />
+    </div>
+  )
+  const problems = diagnostics.length > 0 && (
+    <ul className="diagnostics">
+      {diagnostics.map((d, i) => (
+        <li key={i} className={d.severity}>
+          <code>{value.slice(d.start, d.end)}</code> {d.message}
+        </li>
+      ))}
+    </ul>
+  )
+  const syntax = (
       <details className="syntax-help">
         <summary>Syntax</summary>
         <p>
@@ -93,6 +119,58 @@ export function ShorthandInput({ value, onChange, highlights, diagnostics, speed
           only.
         </p>
       </details>
+  )
+
+  if (narrow) {
+    return (
+      <div>
+        <div className="shorthand-bar">
+          <label>Workout</label>
+          <SpeedUnitToggle value={speedUnit} onChange={onSpeedUnit} />
+        </div>
+        <button type="button" className="tap-field shorthand-view" aria-label="Edit workout shorthand" onClick={() => setOpened(value)}>
+          {value ? parts : <span className="empty">{PLACEHOLDER[speedUnit]}</span>}
+        </button>
+        {problems}
+        {opened !== null && (
+          <Sheet
+            title="Workout"
+            onDone={() => setOpened(null)}
+            onCancel={() => {
+              if (value !== opened) onChange(opened)
+              setOpened(null)
+            }}
+          >
+            <div className="symbols">
+              {[...SYMBOLS, speedUnit === 'pace' ? '/km' : 'km/h'].map((sym) => (
+                // Keeping the default off mousedown leaves the focus, and the keyboard, with the textarea.
+                <button key={sym} type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => insert(sym)}>
+                  {sym}
+                </button>
+              ))}
+            </div>
+            {field(true)}
+            {problems}
+            <div className="shorthand-bar">
+              <label>Speeds without a unit</label>
+              <SpeedUnitToggle value={speedUnit} onChange={onSpeedUnit} />
+            </div>
+            {syntax}
+          </Sheet>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="shorthand-bar">
+        <label htmlFor="shorthand">Workout</label>
+        <SpeedUnitToggle value={speedUnit} onChange={onSpeedUnit} />
+      </div>
+      {field(autoFocus)}
+      {problems}
+      {syntax}
     </div>
   )
 }

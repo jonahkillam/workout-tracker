@@ -91,9 +91,13 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
         <>
           <div className="chart-bar">
             <span className="meta">
-              {view
-                ? `Showing ${fmtClock(view[0])}–${fmtClock(view[1])}`
-                : 'Drag across the chart to zoom in. Hover for values.'}
+              {view ? (
+                `Showing ${fmtClock(view[0])}–${fmtClock(view[1])}`
+              ) : (
+                <>
+                  Drag across the chart to zoom in.<span className="hover-only"> Hover for values.</span>
+                </>
+              )}
             </span>
             {view && <button onClick={() => setView(undefined)}>Reset zoom</button>}
           </div>

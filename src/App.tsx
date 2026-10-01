@@ -17,6 +17,7 @@ import { ActivityViewer } from './ui/view/ActivityViewer'
 import { SettingsDialog } from './ui/settings/SettingsDialog'
 import { GapCalculator } from './ui/tools/GapCalculator'
 import { WeekPanels } from './ui/week/WeekPanels'
+import { useSwipe } from './ui/common/useSwipe'
 import { Logo } from './ui/Logo'
 import { WeekTable } from './ui/week/WeekTable'
 
@@ -75,6 +76,8 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [overlayOpen])
+  // On touch screens, so do sideways swipes.
+  useSwipe((dir) => setStart((s) => addDays(s, 7 * dir)), !overlayOpen)
 
   // null once loaded with nothing saved; undefined while loading.
   const stored = useLiveQuery(async () => (await db.settings.get('settings')) ?? null, [])
@@ -142,7 +145,7 @@ export default function App() {
         <h1>
           Week {isoWeek(start)} <span className="range">{fmtWeekRange(start)}</span>
         </h1>
-        <div className="btn-group">
+        <div className="btn-group hover-only">
           <button onClick={() => setStart(addDays(start, -7))} aria-label="Previous week">
             ‹
           </button>

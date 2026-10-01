@@ -693,6 +693,10 @@ table.week a:hover {
   width: 60px;
 }
 
+.field.total-time input {
+  width: 96px;
+}
+
 /* Phones: dialogs fill the screen, with the heading and the actions pinned while the rest scrolls. */
 @media (max-width: 700px) {
   body:has(.modal-backdrop) {
@@ -744,13 +748,6 @@ table.week a:hover {
   .form-row .field input,
   .form-row .field select {
     width: 100%;
-  }
-  /* Keeps the fields wide enough to read and edit; the table scrolls sideways. */
-  .steps select {
-    min-width: 104px;
-  }
-  .steps input:not([type='checkbox']) {
-    min-width: 76px;
   }
 }
 
@@ -1404,6 +1401,158 @@ fieldset.step-table {
   color: var(--text-3);
 }
 
+/* ---------- Editing on a phone ---------- */
+
+/* Stands in for a field at phone width: shows its content and opens a sheet to edit it. */
+.tap-field {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 36px;
+  padding: 6px 8px;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tap-field.shorthand-view {
+  min-height: 64px;
+  margin: 0;
+  font: 14px/1.6 var(--mono);
+  background: var(--bg);
+  border-color: var(--border-strong);
+}
+
+.note-tap {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.note-tap .note-kind {
+  flex: none;
+}
+
+.note-tap .note-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
+/* The step table as a list: a row opens its step in a sheet. */
+.step-rows {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.step-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.step-row.repeat-row {
+  background: var(--panel);
+}
+
+.step-open {
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  min-width: 0;
+  height: auto;
+  padding: 6px 4px;
+  border: 0;
+  background: none;
+  text-align: left;
+  white-space: normal;
+}
+
+.step-open:hover:not(:disabled) {
+  background: none;
+}
+
+.step-open .computed {
+  color: var(--text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.step-row .row-actions {
+  flex: none;
+}
+
+.step-row button.icon {
+  background: none;
+}
+
+/* A sheet edits one thing over the dialog it came from, and ends where the keyboard begins. */
+.modal-backdrop:has(> .sheet) {
+  overflow: hidden;
+}
+
+.modal.sheet {
+  min-height: 0;
+  height: var(--sheet-height, 100dvh);
+}
+
+.sheet > .modal-head {
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.sheet > .sheet-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 -12px;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+
+.sheet-body > * {
+  flex: none;
+  margin: 0;
+}
+
+.sheet-body .field input,
+.sheet-body .field select,
+.sheet-body .field textarea {
+  width: 100%;
+}
+
+.sheet-body .shorthand textarea,
+.sheet-body .shorthand .mirror {
+  min-height: 128px;
+}
+
+.sheet-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.symbols {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+}
+
+.symbols button {
+  flex: 1 0 auto;
+  justify-content: center;
+  min-width: 26px;
+  padding: 0 5px;
+  font-family: var(--mono);
+}
+
 /* ---------- Touch ---------- */
 
 /* Nothing hovers on a touch screen, so the per-day add button is always shown. */
@@ -1412,11 +1561,22 @@ fieldset.step-table {
     opacity: 1;
     padding: 6px 0;
   }
+  .hover-only {
+    display: none;
+  }
 }
 
 @media (pointer: coarse) {
   html {
     -webkit-tap-highlight-color: transparent;
+    /* No pinch or double-tap zoom; iOS Safari ignores user-scalable=no. */
+    touch-action: pan-x pan-y;
+    scrollbar-width: none;
+  }
+
+  /* Safari before 18.2 has no scrollbar-width. */
+  html::-webkit-scrollbar {
+    display: none;
   }
 
   button,

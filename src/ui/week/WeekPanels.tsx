@@ -5,6 +5,7 @@ import { fmtDay, weekDays } from '../../metrics/dates'
 import type { WeekSummary } from '../../metrics/week'
 import { Columns } from '../charts/Columns'
 import { ZoneBar } from '../charts/ZoneBar'
+import { useNarrow } from '../common/useNarrow'
 
 interface Props {
   /** Consecutive weeks, oldest first; the last one is the week shown. */
@@ -33,6 +34,8 @@ function WeekNotes({ start }: { start: string }) {
 export function WeekPanels({ weeks, onSelectWeek }: Props) {
   const summary = weeks[weeks.length - 1]
   const labels = weeks.map((w) => fmtDay(w.start).day)
+  // On a phone a tap is for reading the value, so the bars don't navigate.
+  const selectWeek = useNarrow() ? undefined : (i: number) => onSelectWeek(weeks[i].start)
   return (
     <div className="panels">
       <section className="panel">
@@ -56,7 +59,7 @@ export function WeekPanels({ weeks, onSelectWeek }: Props) {
           labels={labels}
           format={(v) => String(Math.round(v))}
           highlight={weeks.length - 1}
-          onSelect={(i) => onSelectWeek(weeks[i].start)}
+          onSelect={selectWeek}
           height={90}
         />
       </section>
@@ -67,7 +70,7 @@ export function WeekPanels({ weeks, onSelectWeek }: Props) {
           labels={labels}
           format={(v) => Math.round(v).toLocaleString()}
           highlight={weeks.length - 1}
-          onSelect={(i) => onSelectWeek(weeks[i].start)}
+          onSelect={selectWeek}
           height={90}
         />
       </section>

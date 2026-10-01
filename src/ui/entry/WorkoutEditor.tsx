@@ -210,20 +210,28 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
         </label>
         <label className="field grow">
           <span>Title</span>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} />
+          <input value={title} onChange={(e) => setTitle(e.target.value)} enterKeyHint="done" />
         </label>
         <label className="field narrow">
           <span>RPE</span>
-          <input type="number" min={1} max={10} step={0.5} value={rpe} onChange={(e) => setRpe(e.target.value)} />
+          <input
+            type="number"
+            inputMode="decimal"
+            min={1}
+            max={10}
+            step={0.5}
+            value={rpe}
+            onChange={(e) => setRpe(e.target.value)}
+          />
         </label>
-        <label className="field">
+        <label className="field total-time">
           <span>Total time</span>
           <input
             value={totalText}
             onChange={(e) => setTotalText(e.target.value)}
             placeholder={totals.duration ? fmtClock(totals.duration) : 'e.g. 65m'}
             title="Optional. Covers time the structure doesn't describe."
-            style={{ width: 96 }}
+            enterKeyHint="done"
           />
         </label>
       </div>
