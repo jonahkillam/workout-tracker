@@ -30,6 +30,7 @@ mise run test:watch
 | `src/parser/format.ts` | Number, duration, pace and speed formatting |
 | `src/metrics/workout.ts` | Per-step stats, zones, load, Minetti grade cost, GAP, workout totals |
 | `src/metrics/week.ts`, `dates.ts` | Week summaries, acute:chronic ratio, ISO weeks, local-date helpers |
+| `src/nav/link.ts` | Links to a week or workout (`/?week=<date>`, `/?workout=<id>`): one-shot query params, read on load and removed from the URL, which stays `/` |
 | `src/db/db.ts` | Dexie schema (DB `training-log-sync`), save/import/export, `clearLocalData` |
 | `src/supabase.ts`, `src/auth/` | Supabase client; `AuthGate` (sign-in, then the app for that user), `SignIn`, sign-out |
 | `src/sync/` | Outbox middleware (`outbox.ts`), push/pull (`engine.ts`), object ↔ server row mapping (`rows.ts`) |

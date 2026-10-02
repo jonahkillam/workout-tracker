@@ -13,6 +13,7 @@ import { linkOffset, stepAverage, stepSegments, stepWindows } from '../../record
 import { effortFor, type EffortKind } from '../../recordings/derived'
 import { DetailChart } from '../charts/DetailChart'
 import { ZoneLegend } from '../charts/TimelineBar'
+import { CopyLinkButton } from '../common/CopyLinkButton'
 import { Modal } from '../common/Modal'
 import { RecordingSummary } from '../common/RecordingSummary'
 import { StatsRow } from '../entry/StatsRow'
@@ -132,6 +133,7 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
       {w.notes?.length ? <NoteLines notes={w.notes} /> : null}
 
       <footer className="modal-actions">
+        <CopyLinkButton link={{ workout: w.id }} />
         <span className="spacer" />
         <button onClick={onClose}>Close</button>
         <button className="primary" onClick={onEdit}>

@@ -11,6 +11,11 @@ export function toISO(d: Date): string {
   return `${d.getFullYear()}-${m}-${day}`
 }
 
+/** Whether `iso` is a real calendar date written as YYYY-MM-DD. */
+export function isDate(iso: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) && toISO(parse(iso)) === iso
+}
+
 export function today(): string {
   return toISO(new Date())
 }

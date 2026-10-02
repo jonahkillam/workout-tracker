@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS, profileOf, type Recording, type RecordingStreams, typ
 import { autoLogRecordings, detectText } from './recordings/autolog'
 import { newLink } from './recordings/match'
 import { fillRecordedSummaries } from './recordings/recorded'
+import { clearLink, pendingLink } from './nav/link'
 import { handleCallback } from './strava/auth'
 import { useEnsureStreams } from './strava/useStreams'
 import { useWeekSync } from './strava/useWeekSync'
@@ -17,6 +18,7 @@ import { ActivityViewer } from './ui/view/ActivityViewer'
 import { SettingsDialog } from './ui/settings/SettingsDialog'
 import { GapCalculator } from './ui/tools/GapCalculator'
 import { WeekPanels } from './ui/week/WeekPanels'
+import { CopyLinkButton } from './ui/common/CopyLinkButton'
 import { useSwipe } from './ui/common/useSwipe'
 import { Logo } from './ui/Logo'
 import { WeekTable } from './ui/week/WeekTable'
@@ -32,13 +34,32 @@ function ago(ms: number): string {
 }
 
 export default function App() {
-  const [start, setStart] = useState(() => weekStart(today()))
+  // A link to a week opens on it; otherwise the current week.
+  const [start, setStart] = useState(() => {
+    const link = pendingLink()
+    return link && 'week' in link ? link.week : weekStart(today())
+  })
   const [editing, setEditing] = useState<Draft | null>(null)
   // The workout open in the viewer. Editing from there returns to it afterwards.
   const [viewingId, setViewingId] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showGap, setShowGap] = useState(false)
   const [connectError, setConnectError] = useState<string | null>(null)
+  const [linkMissing, setLinkMissing] = useState(false)
+
+  // A link to a workout opens its week and the viewer on it. The link applies once.
+  useEffect(() => {
+    const link = pendingLink()
+    clearLink()
+    if (!link || !('workout' in link)) return
+    void (async () => {
+      // On a new device the workout only arrives with the first pull.
+      const w = (await db.workouts.get(link.workout)) ?? (await whenReady().then(() => db.workouts.get(link.workout)))
+      if (!w) return setLinkMissing(true)
+      setStart(weekStart(w.date))
+      setViewingId(w.id)
+    })()
+  }, [])
 
   // Finish the Strava OAuth redirect, if this load is one.
   useEffect(() => {
@@ -152,7 +173,8 @@ export default function App() {
   const isFuture = start > weekStart(today())
   const viewing = viewingId ? workouts?.find((w) => w.id === viewingId) : undefined
   // Close the viewer once its workout is gone: deleted, or moved out of these weeks by an edit.
-  if (viewingId && workouts && !viewing) setViewingId(null)
+  // Not while another week is loading: a linked workout opens before its week's rows are here.
+  if (viewingId && loaded && !viewing) setViewingId(null)
   // Per-sample data for this week's recordings, for the timelines.
   const recordingIds = [
     ...new Set([...weekWorkouts.flatMap((w) => (w.recording ? [w.recording.id] : [])), ...weekRecordings.map((r) => r.id)]),
@@ -198,6 +220,7 @@ export default function App() {
         <button onClick={() => goTo(weekStart(today()))} disabled={isThisWeek}>
           Today
         </button>
+        <CopyLinkButton link={{ week: start }} short />
         <span className="spacer" />
         <span className="sync-status meta" title={account.error}>
           {account.syncing
@@ -237,6 +260,14 @@ export default function App() {
         <p className="notice">
           Couldn&rsquo;t connect Strava: {connectError}{' '}
           <button className="link" onClick={() => setConnectError(null)}>
+            Dismiss
+          </button>
+        </p>
+      )}
+      {linkMissing && (
+        <p className="notice">
+          The linked workout wasn&rsquo;t found.{' '}
+          <button className="link" onClick={() => setLinkMissing(false)}>
             Dismiss
           </button>
         </p>
