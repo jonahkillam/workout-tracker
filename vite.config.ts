@@ -1,4 +1,6 @@
 import react from '@vitejs/plugin-react'
+import { createHash } from 'node:crypto'
+import { readdirSync, readFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { defineConfig, loadEnv, type Connect, type Plugin } from 'vite'
 import { handleStrava, type StravaEnv } from './server/strava.ts'
@@ -31,6 +33,41 @@ function stravaTokenRoutes(env: StravaEnv): Plugin {
   }
 }
 
+/**
+ * Writes /sw.js: the service worker in src/sw/sw.js, told which files make up this build's app shell. The
+ * version is a hash of their contents, so the worker changes (and browsers install it) only when they do.
+ */
+function appShellWorker(): Plugin {
+  return {
+    name: 'app-shell-worker',
+    apply: 'build',
+    enforce: 'post',
+    generateBundle(_, bundle) {
+      const hash = createHash('sha256')
+      const files: string[] = []
+      for (const [name, file] of Object.entries(bundle).sort(([a], [b]) => a.localeCompare(b))) {
+        files.push(name === 'index.html' ? '/' : `/${name}`)
+        hash.update(name).update(file.type === 'chunk' ? file.code : file.source)
+      }
+      if (!files.includes('/')) this.error('index.html is not in the bundle, so the service worker would cache no page')
+      const publicDir = new URL('./public/', import.meta.url)
+      for (const name of readdirSync(publicDir).sort()) {
+        if (name.startsWith('.')) continue
+        files.push(`/${name}`)
+        hash.update(name).update(readFileSync(new URL(name, publicDir)))
+      }
+      const worker = readFileSync(new URL('./src/sw/sw.js', import.meta.url), 'utf8')
+      hash.update(worker)
+      const version = hash.digest('hex').slice(0, 12)
+      this.emitFile({
+        type: 'asset',
+        fileName: 'sw.js',
+        source: `const VERSION = ${JSON.stringify(version)}\nconst FILES = ${JSON.stringify(files)}\n${worker}`,
+      })
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -39,7 +76,7 @@ export default defineConfig(({ mode }) => {
   const supabaseUrl = env.SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseKey = env.SUPABASE_PUBLISHABLE_KEY ?? env.SUPABASE_ANON_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   return {
-    plugins: [react(), stravaTokenRoutes(env)],
+    plugins: [react(), stravaTokenRoutes(env), appShellWorker()],
     define: {
       'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(supabaseUrl ?? ''),
       'import.meta.env.VITE_SUPABASE_KEY': JSON.stringify(supabaseKey ?? ''),

@@ -22,7 +22,7 @@ Sign in with your email: the email has a 6-digit code to enter on the sign-in pa
 
 The app keeps a copy of your data in the browser (IndexedDB), so it's fast and works offline, and syncs it with Supabase in the background. The toolbar shows when changes were last saved, or how many are waiting when offline. Signing out removes the data from that browser. Settings → Export JSON still makes a backup file.
 
-**On a phone:** install it from the browser (Android Chrome: menu → Install app; iOS Safari: Share → Add to Home Screen). The installed app keeps its own data, so sign in there with the code; on iOS the email's link opens Safari instead.
+**On a phone:** install it from the browser (Android Chrome: menu → Install app; iOS Safari: Share → Add to Home Screen). The installed app keeps its own data, so sign in there with the code; on iOS the email's link opens Safari instead. After it has loaded once with a connection it opens without one; changes made offline are sent when the connection returns. A new version of the app is picked up the next time it is fully closed and reopened.
 
 Data from before accounts stays in the browser, separate from the account. Settings offers to download it, add it to your account, or delete it.
 

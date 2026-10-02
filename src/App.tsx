@@ -13,6 +13,7 @@ import { handleCallback } from './strava/auth'
 import { useEnsureStreams } from './strava/useStreams'
 import { useWeekSync } from './strava/useWeekSync'
 import { whenReady } from './sync/engine'
+import { useOnline } from './sync/useOnline'
 import { useSyncStatus } from './sync/useSyncStatus'
 import { WorkoutEditor, type Draft } from './ui/entry/WorkoutEditor'
 import { ActivityViewer } from './ui/view/ActivityViewer'
@@ -161,7 +162,9 @@ export default function App() {
     )
   }, [loaded, start])
   const lastFetch = useLiveQuery(() => db.stravaWeekFetch.get(start), [start])
-  const sync = useWeekSync(start, ready && !!strava)
+  const online = useOnline()
+  // Offline, the week is fetched when the connection returns.
+  const sync = useWeekSync(start, ready && !!strava && online)
   const account = useSyncStatus()
   const intervalsError = useIntervalsSync(ready)
 
@@ -233,8 +236,10 @@ export default function App() {
           {account.syncing
             ? 'Saving…'
             : account.pending && account.error
-              ? `${navigator.onLine ? 'Sync failed' : 'Offline'}, ${account.pending} unsaved`
-              : account.lastSyncedAt
+              ? `${online ? 'Sync failed' : 'Offline'}, ${account.pending} unsaved`
+              : !online
+                ? 'Offline'
+                : account.lastSyncedAt
                 ? `Saved ${ago(account.lastSyncedAt)}`
                 : ''}
         </span>

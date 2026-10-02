@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { clearLocalData, db, deleteTemplate, deleteWorkout, saveTemplate, saveWorkout } from '../db/db'
 import type { Workout } from '../model/types'
-import { adoptOwner, pull, push, startSync, whenReady } from './engine'
+import { adoptOwner, pull, push, startSync, syncNow, syncStatus, whenReady } from './engine'
 import { FakeRemote } from './fakeRemote'
 
 let server: FakeRemote
@@ -134,6 +134,26 @@ describe('sync engine', () => {
       stop = startSync(server)
       await whenReady()
       expect(await db.workouts.count()).toBe(1)
+      stop()
+    })
+
+    it('makes no requests while offline, and pushes what was written once back online', async () => {
+      vi.stubGlobal('navigator', { onLine: false })
+      const calls = vi.spyOn(server, 'pull')
+      await saveWorkout(workout('w1'))
+      const stop = startSync(server)
+      // The app's startup work doesn't wait on the network.
+      await whenReady()
+      expect(calls).not.toHaveBeenCalled()
+      expect(server.rev).toBe(0)
+      expect(await db.outbox.count()).toBe(1)
+      expect(syncStatus.get()).toMatchObject({ syncing: false, error: 'Offline' })
+
+      vi.stubGlobal('navigator', { onLine: true })
+      await syncNow()
+      expect(server.get('workouts', 'w1')?.doc).toMatchObject({ id: 'w1' })
+      expect(await db.outbox.count()).toBe(0)
+      expect(syncStatus.get().error).toBeUndefined()
       stop()
     })
   })

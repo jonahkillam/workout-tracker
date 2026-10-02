@@ -13,6 +13,7 @@ mise run dev         # dev server with SUPABASE_* from .env.local (vercel env pu
 mise run check       # typecheck + lint (oxlint) + tests (vitest) — run before finishing
 mise run db:test     # pgTAP tests in supabase/tests; db:reset re-applies migrations
 mise run build       # production build
+mise run preview:local  # build + serve against the local Supabase (has the service worker)
 mise run test:watch
 ```
 
@@ -31,6 +32,7 @@ mise run test:watch
 | `src/metrics/workout.ts` | Per-step stats, zones, load, Minetti grade cost, GAP, workout totals |
 | `src/metrics/week.ts`, `dates.ts` | Week summaries, acute:chronic ratio, ISO weeks, local-date helpers |
 | `src/nav/link.ts` | Links to a week or workout (`/?week=<date>`, `/?workout=<id>`): one-shot query params, read on load and removed from the URL, which stays `/` |
+| `src/sw/sw.js` | Service worker: caches the app shell so the app opens offline. `vite.config.ts` (`appShellWorker`) adds the file list and writes `/sw.js`; builds only |
 | `src/db/db.ts` | Dexie schema (DB `training-log-sync`), save/import/export, `clearLocalData` |
 | `src/supabase.ts`, `src/auth/` | Supabase client; `AuthGate` (sign-in, then the app for that user), `SignIn`, sign-out |
 | `src/sync/` | Outbox middleware (`outbox.ts`), push/pull (`engine.ts`), object ↔ server row mapping (`rows.ts`) |
@@ -72,6 +74,10 @@ Units inside the model: seconds, metres, km/h, and incline as percent grade. Con
   - `recordingStreams`, `stravaWeekFetch`, `stravaConnection` and `intervalsConnection` are per-device. A device without a recording's streams downloads them from Strava when it shows the recording (`useEnsureStreams`).
   - The local DB belongs to one user (`syncMeta.owner`). Signing in as someone else wipes it first; signing out wipes it.
   - Startup work that writes (summaries, auto-logging, Strava week sync) waits for `whenReady()`, the first pull.
+- **Offline:** once signed in and loaded, the app must open and take edits with no connection.
+  - The service worker caches only the same-origin app shell. It never handles `/api/` or other origins, and holds no data.
+  - `AuthGate` opens the app for the local owner (`syncMeta.owner`) without waiting for the session (`userToOpen` in `auth/user.ts`). Only a real sign-out shows sign-in: offline, the Supabase client reports no session when it can't renew an expired one.
+  - `syncNow` makes no requests while `navigator.onLine` is false, so `whenReady()` resolves at once; the `online` event retries.
 - **A workout without a recording is planned** (`isPlanned`): "Planned" from today on, "Missed" once its day has passed. Planned workouts count for nothing in week totals, load or trends (`summarizeWeek` skips them).
   - A workout planned ahead of its date takes the current thresholds when a recording auto-links to it (`linkWeek`), since that is when it was done.
   - A `Template` holds only shorthand, sport and speed unit; the editor parses it when used.

@@ -65,3 +65,12 @@ run = "npm run build"
 description = "Serve the production build"
 depends = ["build"]
 run = "npx vite preview"
+
+[tasks."preview:local"]
+description = "Build and serve against the local Supabase stack (the service worker only exists in a build)"
+depends = ["install"]
+run = """
+eval "$(supabase status -o env | sed -nE 's/^API_URL=/export SUPABASE_URL=/p; s/^PUBLISHABLE_KEY=/export SUPABASE_PUBLISHABLE_KEY=/p; s/^SECRET_KEY=/export SUPABASE_SECRET_KEY=/p')"
+npm run build
+npx vite preview
+"""

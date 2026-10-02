@@ -46,8 +46,17 @@ const fromServer = (r: ServerRow): RemoteRow => {
   return { table, key: r.key, doc: r.deleted ? null : SERVER_TABLES[table].fromRow(r.row), deleted: r.deleted, rev: r.rev }
 }
 
+/**
+ * Without a session a request would go out as nobody and be refused. That happens for a while after coming
+ * back online: the Supabase client waits out a cooldown before it tries again to renew an expired session.
+ */
+async function requireSession() {
+  if (!(await supabase.auth.getSession()).data.session) throw new Error('Waiting for sign-in to be renewed')
+}
+
 export const supabaseRemote: Remote = {
   async push(changes) {
+    await requireSession()
     const rows = changes.map((c) => {
       const t = SERVER_TABLES[c.table]
       return { table: t.name, key: c.key, row: c.doc && t.toRow(c.doc), deleted: c.deleted, client_ts: c.client_ts }
@@ -57,6 +66,7 @@ export const supabaseRemote: Remote = {
     return (data as { table: string; key: string }[]).map((r) => ({ table: LOCAL_TABLE[r.table], key: r.key }))
   },
   async pull(since, limit) {
+    await requireSession()
     const { data, error } = await supabase.rpc('sync_pull', { since, lim: limit })
     if (error) throw error
     return (data as ServerRow[]).map(fromServer)
@@ -176,6 +186,11 @@ let again = false
 
 /** Pushes then pulls. Calls while one is running queue a single rerun. */
 export function syncNow(): Promise<void> {
+  // Known to be offline: leave it to the 'online' event rather than wait on requests that can't succeed.
+  if (navigator.onLine === false) {
+    setStatus({ error: 'Offline' })
+    return Promise.resolve()
+  }
   if (running) {
     again = true
     return running
