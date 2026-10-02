@@ -60,6 +60,22 @@ When written once, incline and machine level apply to work and rest. Intensity t
 
 **Notes.** Each workout note has a category: Note, Fueling, Injury, Sleep/wellness or Gear. Add one per line in the entry form. The week table shows them labelled and clipped to two lines; the viewer shows them in full.
 
+## Planning
+
+Each day in the week table has **+ Add**, which opens the workout form for that day, including days in future weeks. A workout is *planned* until a Strava recording is linked to it, and shows as *missed* if its day passes without one. Planned and missed workouts are listed but count for nothing in the week's totals, load or trends. When the activity arrives it links as usual (same day, compatible sport, closest duration), and a workout planned ahead of its day then takes the thresholds in effect at that point.
+
+**Templates.** "Save as template" in the workout form keeps the shorthand, sport and speed unit under a name; "From template…" starts a workout from one. Rename or delete them in Settings. Templates sync with the account.
+
+## intervals.icu
+
+Settings → intervals.icu takes an API key (intervals.icu → Settings → Developer Settings). With one set, planned workouts from today on are sent to your intervals.icu calendar whenever they change: added, edited, moved or deleted. The key stays on that device, so enter it on each device that should send.
+
+- Steps become intervals.icu workout text, with pace, power, zone or heart-rate (% of threshold HR) targets.
+- intervals.icu has no nested repeats, so `3x10x40/20` is written as three `10x` blocks.
+- Incline, machine level, step rate, floors and RPE have no field there; they go in each step's text.
+- A workout that gets its recording keeps its calendar entry, so intervals.icu can pair the two.
+- Only calendar entries this app created are ever changed or deleted.
+
 ## Strava
 
 When connected, the app pulls each week's Strava activities as you view it. It stores them as recordings (summary, laps and streams, including heart rate) and links each one to the workout it clearly matches: same day, compatible sport, closest duration. Activities with no workout show as unstructured activities, with recorded HR, pace or power, and a "Log as workout" link. You can link or unlink a recording from a workout's form.

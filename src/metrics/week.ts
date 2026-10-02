@@ -1,4 +1,4 @@
-import type { Profile, Recording, Sport, Workout } from '../model/types'
+import { isPlanned, type Profile, type Recording, type Sport, type Workout } from '../model/types'
 import { addDays, weekDays } from './dates'
 import { recordedTotals, sessionTotals } from './recorded'
 import { addTotals, emptyTotals, type Totals } from './workout'
@@ -20,6 +20,7 @@ function unlinkedRecordings(workouts: Workout[], recordings: Recording[]): Recor
 /**
  * Totals for the week. Workouts count from their recording where it measures
  * them properly (see `sessionTotals`); unlinked recordings count as recorded.
+ * Planned workouts (no recording) aren't counted.
  */
 function summarizeWeek(
   start: string,
@@ -39,7 +40,9 @@ function summarizeWeek(
     summary.dailyLoad[dayIndex] += t.load
   }
   const byId = new Map(recordings.map((r) => [r.id, r]))
-  for (const w of workouts) add(w.date, w.sport, sessionTotals(w, w.recording && byId.get(w.recording.id), fallback))
+  for (const w of workouts) {
+    if (!isPlanned(w)) add(w.date, w.sport, sessionTotals(w, w.recording && byId.get(w.recording.id), fallback))
+  }
   for (const r of unlinked) add(r.localDate, r.sport, recordedTotals(r, r.sport, r.profile ?? fallback))
   return summary
 }

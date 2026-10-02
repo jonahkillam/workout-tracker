@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(22);
+select plan(25);
 
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000a', 'a@example.com'),
@@ -67,6 +67,19 @@ select public.sync_push('[{"table": "settings", "key": "settings", "client_ts": 
   "row": {"ftp": 250, "stair_step_height": 0.2, "stair_floor_height": 3.25, "speed_unit": "kmh"}}]');
 select ok((select client_ts from public.settings) < 99999999999999, 'future client_ts is clamped');
 select is((select ftp from public.settings), 250::double precision, 'settings has typed columns');
+
+-- Templates sync like the other keyed tables.
+select is(
+  public.sync_push('[{"table": "templates", "key": "t1", "client_ts": 100, "row": {"id": "t1", "name": "Hill reps",
+    "sport": "treadmill", "raw_text": "10x60/60 @ 12%", "updated_at": "2026-09-29T07:00:00Z"}}]'),
+  '[]'::jsonb, 'push accepts a template');
+select results_eq(
+  $$ select "row" ->> 'name', "row" ->> 'raw_text' from public.sync_pull(0) where "table" = 'templates' $$,
+  $$ values ('Hill reps', '10x60/60 @ 12%') $$,
+  'pull returns the template');
+select throws_ok(
+  $$ select public.sync_push('[{"table": "templates", "key": "t2", "client_ts": 1, "row": {"id": "t2", "sport": "run"}}]') $$,
+  '23514', null, 'push rejects a template missing required fields');
 
 -- Bad input is refused rather than stored.
 select throws_ok(

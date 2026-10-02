@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { db, saveWorkout } from '../db/db'
+import { db, saveSettings, saveWorkout } from '../db/db'
+import { DEFAULT_SETTINGS } from '../model/types'
 import { newLink } from '../recordings/match'
 import { parseWorkout } from '../parser/parser'
 import { forgetStravaToken } from './auth'
@@ -109,6 +110,17 @@ describe('syncWeek', () => {
     await db.outbox.clear()
     await syncWeek(WEEK, { now: NOW + 60_000, force: true })
     expect(await db.outbox.count()).toBe(0)
+  })
+
+  it('gives a workout planned ahead the thresholds in effect when its recording links', async () => {
+    const blocks = parseWorkout('50m').blocks
+    await saveSettings({ ...DEFAULT_SETTINGS, lthr: 160 })
+    const ahead = await saveWorkout({ date: '2026-09-29', sport: 'treadmill', rawText: '50m', blocks, createdAt: new Date(2026, 8, 20).getTime() })
+    const sameDay = await saveWorkout({ date: '2026-09-30', sport: 'stair', rawText: '30m', blocks: parseWorkout('30m').blocks })
+    await saveSettings({ ...DEFAULT_SETTINGS, lthr: 170 })
+    expect((await syncWeek(WEEK, { now: NOW })).linked).toBe(2)
+    expect((await db.workouts.get(ahead.id))?.profile?.lthr).toBe(170)
+    expect((await db.workouts.get(sameDay.id))?.profile?.lthr).toBe(160)
   })
 
   it("doesn't link again a recording the user unlinked", async () => {

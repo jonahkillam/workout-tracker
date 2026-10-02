@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { clearLocalData, db, deleteWorkout, saveWorkout } from '../db/db'
+import { clearLocalData, db, deleteTemplate, deleteWorkout, saveTemplate, saveWorkout } from '../db/db'
 import type { Workout } from '../model/types'
 import { adoptOwner, pull, push, startSync, whenReady } from './engine'
 import { FakeRemote } from './fakeRemote'
@@ -24,6 +24,18 @@ beforeEach(async () => {
 })
 
 describe('sync engine', () => {
+  it('syncs templates and their deletion between devices', async () => {
+    await saveTemplate({ id: 't1', name: 'Hill reps', sport: 'treadmill', rawText: '10x60/60 @ 12%' })
+    await push(server)
+    await switchDevice()
+    await pull(server)
+    expect(await db.templates.get('t1')).toMatchObject({ name: 'Hill reps', rawText: '10x60/60 @ 12%' })
+
+    await deleteTemplate('t1')
+    await push(server)
+    expect(server.get('templates', 't1')?.deleted).toBe(true)
+  })
+
   it('pushes local writes and empties the outbox', async () => {
     await saveWorkout({ ...workout('w1'), notes: [{ kind: 'fuel', text: 'gel' }] })
     await push(server)

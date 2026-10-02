@@ -75,6 +75,8 @@ function linkWeek(days: string[]): Promise<number> {
         .equals(l.workoutId)
         .modify((w) => {
           w.recording = newLink(l.recordingId, 'auto')
+          // Planned ahead of its day: it takes the thresholds in effect now that it's done, not those it was planned with.
+          if (toISO(new Date(w.createdAt)) < w.date) w.profile = profileOf(settings)
           w.updatedAt = now
         })
     }

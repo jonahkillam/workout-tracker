@@ -3,6 +3,7 @@ import {
   DEFAULT_SETTINGS,
   profileOf,
   THRESHOLD_KEYS,
+  type IntervalsConnection,
   type Note,
   type Profile,
   type Recording,
@@ -10,6 +11,7 @@ import {
   type Settings,
   type StravaConnection,
   type StravaWeekFetch,
+  type Template,
   type WeekNote,
   type Workout,
 } from '../model/types'
@@ -38,9 +40,11 @@ export const db = new Dexie('training-log-sync') as Dexie & {
   weekNotes: EntityTable<WeekNote, 'weekStart'>
   settings: EntityTable<SettingsRow, 'id'>
   recordings: EntityTable<Recording, 'id'>
+  templates: EntityTable<Template, 'id'>
   recordingStreams: EntityTable<RecordingStreams, 'recordingId'>
   stravaWeekFetch: EntityTable<StravaWeekFetch, 'weekStart'>
   stravaConnection: EntityTable<StravaConnection, 'id'>
+  intervalsConnection: EntityTable<IntervalsConnection, 'id'>
   outbox: Table<OutboxEntry, [SyncedTable, string]>
   syncMeta: EntityTable<SyncMeta, 'id'>
 }
@@ -58,6 +62,11 @@ db.version(1).stores({
   outbox: '[table+key]',
   syncMeta: 'id',
 })
+
+db.version(2).stores({ templates: 'id' })
+
+// Per-device, like stravaConnection: not synced.
+db.version(3).stores({ intervalsConnection: 'id' })
 
 db.use(outboxMiddleware)
 
@@ -87,6 +96,16 @@ export async function saveWorkout(w: Omit<Workout, 'id' | 'createdAt' | 'updated
 
 export function deleteWorkout(id: string) {
   return db.workouts.delete(id)
+}
+
+export async function saveTemplate(t: Omit<Template, 'id' | 'updatedAt'> & { id?: string }) {
+  const row: Template = { ...t, id: t.id ?? crypto.randomUUID(), updatedAt: Date.now() }
+  await db.templates.put(row)
+  return row
+}
+
+export function deleteTemplate(id: string) {
+  return db.templates.delete(id)
 }
 
 export function saveWeekNote(weekStart: string, text: string) {
@@ -130,6 +149,8 @@ export interface ExportFile {
   settings: Settings
   /** Recording summaries and laps. Streams are left out; they can be refetched. */
   recordings: Recording[]
+  /** Missing in exports made before templates existed. */
+  templates?: Template[]
 }
 
 export async function exportAll(): Promise<ExportFile> {
@@ -140,13 +161,14 @@ export async function exportAll(): Promise<ExportFile> {
     weekNotes: await db.weekNotes.toArray(),
     settings: await loadSettings(),
     recordings: await db.recordings.toArray(),
+    templates: await db.templates.toArray(),
   }
 }
 
 /** Merges an export into the database; newer records win. */
 export async function importAll(data: ExportFile) {
   if (data.version !== 3) throw new Error(`Unsupported export version ${data.version}`)
-  await db.transaction('rw', [db.workouts, db.weekNotes, db.settings, db.recordings], async () => {
+  await db.transaction('rw', [db.workouts, db.weekNotes, db.settings, db.recordings, db.templates], async () => {
     for (const w of data.workouts) {
       const existing = await db.workouts.get(w.id)
       if (!existing || existing.updatedAt < w.updatedAt) await db.workouts.put(w)
@@ -158,6 +180,10 @@ export async function importAll(data: ExportFile) {
     for (const r of data.recordings) {
       const existing = await db.recordings.get(r.id)
       if (!existing || existing.updatedAt < r.updatedAt) await db.recordings.put(r)
+    }
+    for (const t of data.templates ?? []) {
+      const existing = await db.templates.get(t.id)
+      if (!existing || existing.updatedAt < t.updatedAt) await db.templates.put(t)
     }
     await saveSettings({ ...DEFAULT_SETTINGS, ...data.settings })
   })

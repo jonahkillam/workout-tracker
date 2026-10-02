@@ -4,7 +4,7 @@ import type { WeekSummary } from '../../metrics/week'
 import { recordedAverage, recordedTotals, sessionTotals } from '../../metrics/recorded'
 import type { Totals } from '../../metrics/workout'
 import type { Block, Profile, Recording, RecordingStreams, Settings, Sport, Workout } from '../../model/types'
-import { SPORT_LABEL, SPORTS } from '../../model/types'
+import { isPlanned, SPORT_LABEL, SPORTS } from '../../model/types'
 import { fmtHours, num } from '../../parser/format'
 import { linkOffset } from '../../recordings/align'
 import { effortFor, type Effort } from '../../recordings/derived'
@@ -24,6 +24,8 @@ interface Props {
   acwr?: number
   settings: Settings
   onOpen: (w: Workout) => void
+  /** Add a workout on a day. */
+  onAdd: (date: string) => void
   onLogRecording: (r: Recording) => void
 }
 
@@ -77,7 +79,7 @@ function cachedEffort(
   return effort
 }
 
-export function WeekTable({ start, workouts, recordings, streams, summary, acwr, settings, onOpen, onLogRecording }: Props) {
+export function WeekTable({ start, workouts, recordings, streams, summary, acwr, settings, onOpen, onAdd, onLogRecording }: Props) {
   const now = today()
   const byId = new Map(recordings.map((r) => [r.id, r]))
   const linked = new Set(workouts.map((w) => w.recording?.id).filter(Boolean))
@@ -91,6 +93,16 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
       <td rowSpan={Math.max(1, span)} className={`day${date === now ? ' today' : ''}`}>
         <div className="dow">{weekday}</div>
         <div className="dom">{day}</div>
+        <button
+          className="link add"
+          aria-label={`Add workout on ${weekday} ${day}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onAdd(date)
+          }}
+        >
+          + Add
+        </button>
       </td>
     )
 
@@ -112,10 +124,13 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
       const t = { ...sessionTotals(w, rec, settings), hr: rec?.avgHr }
       const recStreams = w.recording && streams.get(w.recording.id)
       const mainSet = mainSetSummary(w.blocks, w.speedUnit ?? settings.speedUnit)
-      const subline = [mainSet && w.title, w.rpe !== undefined && `RPE ${w.rpe}`].filter(Boolean) as string[]
+      const planned = isPlanned(w)
+      // Not done by the end of its day: missed.
+      const status = planned && (date < now ? 'Missed' : 'Planned')
+      const subline = [status, mainSet && w.title, w.rpe !== undefined && `RPE ${w.rpe}`].filter(Boolean) as string[]
       const url = rec && stravaUrl(rec)
       rows.push(
-        <tr key={w.id} className={`session${i === 0 ? ' day-start' : ''}`} onClick={() => onOpen(w)}>
+        <tr key={w.id} className={`session${planned ? ' planned' : ''}${i === 0 ? ' day-start' : ''}`} onClick={() => onOpen(w)}>
           {i === 0 && dayCell}
           <td className="sport wide-only">{SPORT_LABEL[w.sport]}</td>
           <td className="detail">

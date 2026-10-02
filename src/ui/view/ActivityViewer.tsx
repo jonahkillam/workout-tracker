@@ -1,11 +1,11 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useMemo, useState, type ReactNode } from 'react'
 import { db } from '../../db/db'
-import { fmtLongDate } from '../../metrics/dates'
+import { fmtLongDate, today } from '../../metrics/dates'
 import { stepStats, workoutTotals } from '../../metrics/workout'
 import { occurrences } from '../../model/tree'
 import type { Block, Settings, Step, Workout } from '../../model/types'
-import { KIND_LABEL, SPORT_LABEL } from '../../model/types'
+import { isPlanned, KIND_LABEL, SPORT_LABEL } from '../../model/types'
 import { amountText, fmtClock, fmtSpeedIn } from '../../parser/format'
 import { fmtTargets } from '../../parser/serialize'
 import { mainSetSummary } from '../../parser/summary'
@@ -78,6 +78,7 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
         <span className="meta">
           {fmtLongDate(w.date)} · {SPORT_LABEL[w.sport]}
           {w.rpe !== undefined && ` · RPE ${w.rpe}`}
+          {isPlanned(w) && ` · ${w.date < today() ? 'Missed' : 'Planned'}`}
         </span>
       </header>
 

@@ -4,7 +4,7 @@
 // delete.
 import Dexie, { type DBCore, type DBCoreMutateRequest, type DBCoreTable, type DBCoreTransaction, type Middleware } from 'dexie'
 
-export const SYNCED_TABLES = ['workouts', 'weekNotes', 'settings', 'recordings'] as const
+export const SYNCED_TABLES = ['workouts', 'weekNotes', 'settings', 'recordings', 'templates'] as const
 export type SyncedTable = (typeof SYNCED_TABLES)[number]
 
 const SYNCED = new Set<string>(SYNCED_TABLES)

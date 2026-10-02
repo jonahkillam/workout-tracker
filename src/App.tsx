@@ -7,6 +7,7 @@ import { DEFAULT_SETTINGS, profileOf, type Recording, type RecordingStreams, typ
 import { autoLogRecordings, detectText } from './recordings/autolog'
 import { newLink } from './recordings/match'
 import { fillRecordedSummaries } from './recordings/recorded'
+import { useIntervalsSync } from './intervals/useIntervalsSync'
 import { clearLink, pendingLink } from './nav/link'
 import { handleCallback } from './strava/auth'
 import { useEnsureStreams } from './strava/useStreams'
@@ -162,6 +163,7 @@ export default function App() {
   const lastFetch = useLiveQuery(() => db.stravaWeekFetch.get(start), [start])
   const sync = useWeekSync(start, ready && !!strava)
   const account = useSyncStatus()
+  const intervalsError = useIntervalsSync(ready)
 
   const weeks = useMemo(
     () => summarizeWeeks(start, TREND_WEEKS, workouts ?? [], settings, recordings ?? []),
@@ -186,6 +188,11 @@ export default function App() {
   }, [recordingIds.join()])
 
   const open = (w: Workout) => setViewingId(w.id)
+  // A new workout starts as the sport of the latest one on screen.
+  const addWorkout = (date: string) => {
+    const latest = (workouts ?? []).reduce<Workout | undefined>((a, w) => (!a || w.date >= a.date ? w : a), undefined)
+    setEditing({ date, sport: latest?.sport ?? 'run' })
+  }
   const logRecording = async (r: Recording) => {
     // Zoned with the thresholds of the time, if the recording has them.
     const profile = r.profile ?? profileOf(settings)
@@ -273,6 +280,7 @@ export default function App() {
         </p>
       )}
       {sync.error && <p className="notice">Strava sync failed: {sync.error}</p>}
+      {intervalsError && <p className="notice">Planned workouts weren&rsquo;t sent to intervals.icu: {intervalsError}</p>}
       {sync.result?.status === 'rate-limited' && (
         <p className="notice">Strava&rsquo;s rate limit was reached; some heart-rate data will load on a later visit.</p>
       )}
@@ -295,6 +303,7 @@ export default function App() {
           acwr={acuteChronicRatio(weeks)}
           settings={settings}
           onOpen={open}
+          onAdd={addWorkout}
           onLogRecording={logRecording}
         />
         <WeekPanels weeks={weeks} onSelectWeek={goTo} />

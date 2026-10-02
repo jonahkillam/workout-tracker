@@ -1,6 +1,6 @@
 // Converts between the app's objects (Dexie rows) and the server's table rows (supabase/migrations): one column
 // per field, snake_case, with timestamps as timestamptz and a workout's recording link spread over three columns.
-import type { Recording, RecordingLink, Settings, WeekNote, Workout } from '../model/types'
+import type { Recording, RecordingLink, Settings, Template, WeekNote, Workout } from '../model/types'
 import type { SyncedTable } from './outbox'
 
 export type Doc = Record<string, unknown>
@@ -120,6 +120,14 @@ export const SERVER_TABLES: Record<SyncedTable, ServerTable> = {
     unstructured: 'unstructured',
     recorded: 'recorded',
     profile: 'profile',
+    updatedAt: time('updated_at'),
+  }),
+  templates: table<Template>('templates', 'id', {
+    id: 'id',
+    name: 'name',
+    sport: 'sport',
+    rawText: 'raw_text',
+    speedUnit: 'speed_unit',
     updatedAt: time('updated_at'),
   }),
 }

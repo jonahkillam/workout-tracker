@@ -1,13 +1,15 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useEffect, useState } from 'react'
 import { signOut } from '../../auth/session'
-import { db, exportAll, importAll, saveSettings, type ExportFile } from '../../db/db'
+import { db, deleteTemplate, exportAll, importAll, saveSettings, saveTemplate, type ExportFile } from '../../db/db'
+import { getAthlete } from '../../intervals/api'
 import { today } from '../../metrics/dates'
-import type { Settings, SpeedUnit } from '../../model/types'
+import { SPORT_LABEL, type Settings, type SpeedUnit } from '../../model/types'
 import { fmtPace } from '../../parser/format'
 import { connectUrl, disconnectStrava, stravaConfigured } from '../../strava/auth'
 import { useSyncStatus } from '../../sync/useSyncStatus'
 import { supabase } from '../../supabase'
+import { CommitInput } from '../common/CommitInput'
 import { Modal } from '../common/Modal'
 import { ThresholdFields } from '../common/ThresholdFields'
 
@@ -109,8 +111,14 @@ export function SettingsDialog({ settings, onClose }: Props) {
         </label>
       </div>
 
+      <h3>Templates</h3>
+      <TemplatesSection />
+
       <h3>Strava</h3>
       <StravaSection />
+
+      <h3>intervals.icu</h3>
+      <IntervalsSection />
 
       <h3>Account</h3>
       <AccountSection onSignedOut={onClose} />
@@ -147,6 +155,107 @@ export function SettingsDialog({ settings, onClose }: Props) {
         </button>
       </footer>
     </Modal>
+  )
+}
+
+/** Saved workouts. Renames and deletes apply at once, not with the dialog's Save. */
+function TemplatesSection() {
+  const templates = useLiveQuery(() => db.templates.toArray(), [])
+  if (!templates) return null
+  if (!templates.length) {
+    return <p className="help">None yet. Use &ldquo;Save as template&rdquo; in a workout&rsquo;s form.</p>
+  }
+  return (
+    <ul className="template-list">
+      {[...templates]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((t) => (
+          <li key={t.id}>
+            <CommitInput
+              aria-label="Template name"
+              value={t.name}
+              onCommit={(name) => {
+                if (name) void saveTemplate({ ...t, name })
+              }}
+            />
+            <span className="meta">{SPORT_LABEL[t.sport]}</span>
+            <code title={t.rawText}>{t.rawText}</code>
+            <button
+              onClick={() => {
+                if (confirm(`Delete the template \u201c${t.name}\u201d?`)) void deleteTemplate(t.id)
+              }}
+            >
+              Delete
+            </button>
+          </li>
+        ))}
+    </ul>
+  )
+}
+
+/** The API key is checked, then kept on this device only. */
+function IntervalsSection() {
+  const connection = useLiveQuery(async () => (await db.intervalsConnection.get('intervals')) ?? null, [])
+  const [key, setKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  if (connection === undefined) return null
+  if (connection) {
+    return (
+      <div className="form-row">
+        <span>
+          Connected{connection.athleteName && (
+            <>
+              {' '}
+              as <strong>{connection.athleteName}</strong>
+            </>
+          )}
+        </span>
+        <span className="help" style={{ margin: 0 }}>
+          Planned workouts from today on are sent to your calendar from this device.
+        </span>
+        <button
+          onClick={async () => {
+            if (confirm('Disconnect intervals.icu? Workouts already on its calendar stay there.')) {
+              await db.intervalsConnection.delete('intervals')
+            }
+          }}
+        >
+          Disconnect
+        </button>
+      </div>
+    )
+  }
+  const connect = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const athlete = await getAthlete(key.trim())
+      await db.intervalsConnection.put({ id: 'intervals', apiKey: key.trim(), athleteName: athlete.name })
+      setKey('')
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <p className="help">
+        Sends planned workouts to your intervals.icu calendar. The API key is under Settings → Developer Settings
+        there. It is kept on this device only, so enter it on each device that should send.
+      </p>
+      <div className="form-row">
+        <label className="field grow">
+          <span>API key</span>
+          <input type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} />
+        </label>
+        <button onClick={connect} disabled={busy || !key.trim()}>
+          Connect
+        </button>
+      </div>
+      {error && <p className="help warn">{error}</p>}
+    </>
   )
 }
 

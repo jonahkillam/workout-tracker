@@ -22,7 +22,7 @@ mise run test:watch
 
 | Path | What |
 |---|---|
-| `src/model/types.ts` | Domain types: `Workout`, `Block` (`Step` \| `Repeat`), `Targets`, `Profile`, `Settings` |
+| `src/model/types.ts` | Domain types: `Workout`, `Block` (`Step` \| `Repeat`), `Targets`, `Profile`, `Settings`, `Template`; `isPlanned` |
 | `src/model/tree.ts` | Block tree helpers: `expand` (applies `skipLastRest`), `occurrences`, path edits, `withSpeedUnit` |
 | `src/parser/tokenizer.ts`, `parser.ts` | Shorthand → `Block[]` + diagnostics + highlight spans |
 | `src/parser/serialize.ts` | `Block[]` → canonical shorthand (used when the step table edits a workout) |
@@ -36,6 +36,8 @@ mise run test:watch
 | `src/sync/` | Outbox middleware (`outbox.ts`), push/pull (`engine.ts`), object ↔ server row mapping (`rows.ts`) |
 | `supabase/` | `config.toml` (auth settings, local ports), `migrations/`, `tests/` (pgTAP), email `templates/` |
 | `src/strava/` | OAuth client (`auth.ts`), API reads (`api.ts`), response mapping (`map.ts`), week sync (`sync.ts`, `useWeekSync.ts`), streams on demand (`streams.ts`, `useStreams.ts`) |
+| `src/export/intervals.ts` | `Block[]` → intervals.icu workout text and calendar event |
+| `src/intervals/` | intervals.icu API client (`api.ts`), calendar reconcile (`sync.ts`, `useIntervalsSync.ts`) |
 | `src/recordings/match.ts` | Recording ↔ workout auto-linking, `newLink` |
 | `src/recordings/intervals.ts`, `autolog.ts`, `recorded.ts` | Structure detection, auto-logging, recorded summaries |
 | `src/metrics/recorded.ts` | Totals from recorded data |
@@ -61,15 +63,24 @@ Units inside the model: seconds, metres, km/h, and incline as percent grade. Con
   - Changing Settings must not alter past zones. The one exception: `saveSettings` fills in thresholds that a workout has no value for.
   - Thresholds have no defaults. Code must handle `thresholdSpeed`, `ftp`, `lthr` and `maxHr` being undefined.
 - **Totals iterate `expand(blocks)`**, never `count ×` multiplication, so `skipLastRest` is respected.
-- **Dexie migrations:** never edit an existing `db.version(n)`. Add a new version with an `upgrade`. Synced documents also live on the server, where Dexie upgrades don't reach, so a shape change to `Workout`, `WeekNote`, `Settings` or `Recording` also needs a migration for its server table and an entry in `src/sync/rows.ts` (which won't type-check until every field has one).
+- **Dexie migrations:** never edit an existing `db.version(n)`. Add a new version with an `upgrade`. Synced documents also live on the server, where Dexie upgrades don't reach, so a shape change to `Workout`, `WeekNote`, `Settings`, `Recording` or `Template` also needs a migration for its server table and an entry in `src/sync/rows.ts` (which won't type-check until every field has one).
 - **Sync:**
-  - The UI and all logic read and write Dexie only. `sync/outbox.ts` (a DBCore middleware) records every write to `workouts`, `weekNotes`, `settings` and `recordings` in `outbox`, in the same transaction. Push reads each key's current row; a missing row is a delete. Code that writes these tables needs no sync calls, but must not keep synced data anywhere else.
+  - The UI and all logic read and write Dexie only. `sync/outbox.ts` (a DBCore middleware) records every write to `workouts`, `weekNotes`, `settings`, `recordings` and `templates` in `outbox`, in the same transaction. Push reads each key's current row; a missing row is a delete. Code that writes these tables needs no sync calls, but must not keep synced data anywhere else.
   - Writes that come from the server, and wiping local data, go through `withoutOutbox`. Code inside the middleware uses Dexie promise chains, not native `await` (it loses Dexie's transaction zone).
-  - The server has a table per synced type (`workouts`, `week_notes`, `settings`, `recordings`) with a column per field; lists and nested objects are jsonb. `sync/rows.ts` converts between these rows and the app's objects. Clients only read the tables; all writes go through `sync_push`, which refuses fields that have no column. It keeps the newest write by `client_ts` (clamped to now + 1 min). Deletes are tombstones. Pulls go by the `rev` cursor. Pushes a server rejects are re-fetched by key.
+  - The server has a table per synced type (`workouts`, `week_notes`, `settings`, `recordings`, `templates`) with a column per field; lists and nested objects are jsonb. `sync/rows.ts` converts between these rows and the app's objects. Clients only read the tables; all writes go through `sync_push`, which refuses fields that have no column. It keeps the newest write by `client_ts` (clamped to now + 1 min). Deletes are tombstones. Pulls go by the `rev` cursor. Pushes a server rejects are re-fetched by key.
   - IDs that more than one device can create must be deterministic, so the devices converge on one row: Strava recordings are `strava-<activity id>`, auto-logged workouts `auto-<recording id>`.
-  - `recordingStreams`, `stravaWeekFetch` and `stravaConnection` are per-device. A device without a recording's streams downloads them from Strava when it shows the recording (`useEnsureStreams`).
+  - `recordingStreams`, `stravaWeekFetch`, `stravaConnection` and `intervalsConnection` are per-device. A device without a recording's streams downloads them from Strava when it shows the recording (`useEnsureStreams`).
   - The local DB belongs to one user (`syncMeta.owner`). Signing in as someone else wipes it first; signing out wipes it.
   - Startup work that writes (summaries, auto-logging, Strava week sync) waits for `whenReady()`, the first pull.
+- **A workout without a recording is planned** (`isPlanned`): "Planned" from today on, "Missed" once its day has passed. Planned workouts count for nothing in week totals, load or trends (`summarizeWeek` skips them).
+  - A workout planned ahead of its date takes the current thresholds when a recording auto-links to it (`linkWeek`), since that is when it was done.
+  - A `Template` holds only shorthand, sport and speed unit; the editor parses it when used.
+- **intervals.icu export** sends planned workouts from today on to the user's intervals.icu calendar, from devices that have an API key.
+  - The key is the user's own, typed into Settings and kept in `intervalsConnection` on that device. It is never synced, exported or put in the bundle. Calls go straight from the browser (CORS allowed).
+  - Sync is a reconcile (`intervals/sync.ts`), not a queue: list the events, compare with the local workouts, send the difference. It must stay safe to repeat.
+  - Only events whose `external_id` starts with `workout-tracker:` are ever updated or deleted. An event whose workout has its recording is left alone; one whose workout is gone is deleted.
+  - It runs only after `whenReady()`: a device that hasn't pulled its workouts would delete their events.
+  - intervals.icu has no nested repeats, incline, level, step rate or RPE. `export/intervals.ts` writes outer repeats out and puts the rest in the step's cue as words. Its step totals must match `expand(blocks)`.
 - **Recordings are source-agnostic.** Strava is the only source so far. A `Recording` holds the summary and laps; its per-sample arrays live in `recordingStreams` as typed arrays. A workout links to at most one recording (`Workout.recording`), which also stores how its steps line up with the recording (`offset`).
   - Week totals (table rows, footer, panels) come from the recording for runs with a GAP histogram and rides with a power histogram (`sessionTotals` in `metrics/recorded.ts`). Unlinked recordings count as unstructured sessions (`recordedTotals`). Treadmill and stair workouts, the editor, the viewer and planned zones stay plan-based.
   - `Recording.recorded` holds the moving time, distance and GAP/power/HR histograms, computed once from the streams (`recordings/recorded.ts`). Histograms don't depend on thresholds; zone them with `w.profile ?? fallback`, or `Recording.profile` for unlinked ones.

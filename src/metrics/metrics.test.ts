@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEFAULT_SETTINGS, type Workout } from '../model/types'
 import { parseWorkout } from '../parser/parser'
+import { newLink } from '../recordings/match'
 import { isoWeek } from './dates'
 import { acuteChronicRatio, summarizeWeeks } from './week'
 import {
@@ -140,6 +141,7 @@ describe('weeks', () => {
       duration: 3600,
       rawText: '',
       blocks: [],
+      recording: newLink(`rec-${date}`, 'manual'),
       createdAt: 0,
       updatedAt: 0,
     })
@@ -149,6 +151,13 @@ describe('weeks', () => {
     expect(weeks.map((x) => x.total.load)).toEqual([300, 300, 300, 300, 600])
     expect(weeks[4].dailyLoad[1]).toBe(600)
     expect(acuteChronicRatio(weeks)).toBe(2)
+
+    // A planned workout (no recording) counts for nothing.
+    const planned: Workout = { ...w('2026-09-30', 10), recording: undefined }
+    const withPlanned = summarizeWeeks('2026-09-28', 5, [...workouts, planned], DEFAULT_SETTINGS)
+    expect(withPlanned[4].total).toEqual(weeks[4].total)
+    expect(withPlanned[4].bySport.run?.count).toBe(1)
+    expect(withPlanned[4].dailyLoad[2]).toBe(0)
   })
 })
 

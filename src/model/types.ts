@@ -114,6 +114,11 @@ export interface Workout {
   updatedAt: number
 }
 
+/** A workout is planned until a recording is linked to it. Planned workouts count for nothing in week totals. */
+export function isPlanned(w: Pick<Workout, 'recording'>): boolean {
+  return !w.recording
+}
+
 export interface RecordingLink {
   id: string
   linkedBy: 'auto' | 'manual'
@@ -210,9 +215,27 @@ export interface StravaConnection {
   scope: string
 }
 
+/** This device's intervals.icu connection. The API key stays on the device: it isn't synced. */
+export interface IntervalsConnection {
+  id: 'intervals'
+  apiKey: string
+  athleteName?: string
+}
+
 export interface StravaWeekFetch {
   weekStart: string
   fetchedAt: number
+}
+
+/** A saved workout to start new ones from. Only the shorthand is kept; it's parsed again when used. */
+export interface Template {
+  id: string
+  name: string
+  sport: Sport
+  rawText: string
+  /** Unit the shorthand's unitless speeds are read in. */
+  speedUnit?: SpeedUnit
+  updatedAt: number
 }
 
 export interface WeekNote {

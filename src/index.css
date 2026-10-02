@@ -257,6 +257,40 @@ code {
   margin-left: -1px;
 }
 
+/* ---------- Templates ---------- */
+
+.form-row.templates {
+  margin-bottom: 8px;
+}
+
+.template-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.template-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.template-list input {
+  flex: 0 1 180px;
+  min-width: 0;
+}
+
+.template-list code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  color: var(--text-2);
+}
+
 /* ---------- Week table ---------- */
 
 table.week {
@@ -315,6 +349,18 @@ td.day .dow {
 td.day .dom {
   color: var(--text-3);
   font-size: 12px;
+}
+
+td.day .add {
+  font-size: 12px;
+  margin-top: 2px;
+  white-space: nowrap;
+}
+
+/* Planned sessions aren't in the totals, so their numbers are shown muted. */
+table.week tr.session.planned td.num,
+table.week tr.session.planned .subline {
+  color: var(--text-3);
 }
 
 td.day.today .dow,

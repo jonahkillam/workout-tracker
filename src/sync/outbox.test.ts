@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { clearLocalData, db, deleteWorkout, saveSettings, saveWeekNote, saveWorkout } from '../db/db'
+import { clearLocalData, db, deleteWorkout, saveSettings, saveTemplate, saveWeekNote, saveWorkout } from '../db/db'
 import { DEFAULT_SETTINGS, type Recording } from '../model/types'
 import { parseWorkout } from '../parser/parser'
 import { withoutOutbox } from './outbox'
@@ -21,7 +21,8 @@ describe('outbox', () => {
     const w = await saveWorkout({ id: 'w1', date: '2026-09-29', sport: 'run', rawText: '20m', blocks: parseWorkout('20m').blocks })
     await saveWeekNote('2026-09-28', 'easy week')
     await db.recordings.put(recording('r1'))
-    expect(await pending()).toEqual(['recordings:r1', 'weekNotes:2026-09-28', 'workouts:w1'])
+    await saveTemplate({ id: 't1', name: 'Easy', sport: 'run', rawText: '20m' })
+    expect(await pending()).toEqual(['recordings:r1', 'templates:t1', 'weekNotes:2026-09-28', 'workouts:w1'])
 
     await db.outbox.clear()
     await db.recordings.update('r1', { unstructured: true })

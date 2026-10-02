@@ -1,10 +1,10 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
-import { db, deleteWorkout, normalizeNotes, saveWorkout } from '../../db/db'
+import { db, deleteWorkout, normalizeNotes, saveTemplate, saveWorkout } from '../../db/db'
 import { fmtLongDate } from '../../metrics/dates'
 import { needsThresholdPace, workoutTotals } from '../../metrics/workout'
 import { withSpeedUnit } from '../../model/tree'
-import type { Block, Note, Profile, Recording, RecordingLink, Settings, SpeedUnit, Sport, Workout } from '../../model/types'
+import type { Block, Note, Profile, Recording, RecordingLink, Settings, SpeedUnit, Sport, Template, Workout } from '../../model/types'
 import { PROFILE_KEYS, profileOf, SPORT_LABEL, SPORTS } from '../../model/types'
 import { fmtClock, fmtDuration, fmtPace } from '../../parser/format'
 import { parseWorkout } from '../../parser/parser'
@@ -123,6 +123,26 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
   const changeDate = (d: string) => {
     setDate(d)
     if (link && recording && recording.rec.localDate !== d) setLink(undefined)
+  }
+
+  const templates = useLiveQuery(() => db.templates.orderBy('id').toArray(), [])
+  const byName = [...(templates ?? [])].sort((a, b) => a.name.localeCompare(b.name))
+
+  const applyTemplate = (t: Template) => {
+    if (text.trim() && text.trim() !== t.rawText && !confirm('Replace this workout\u2019s steps with the template?')) return
+    setSport(t.sport)
+    if (t.speedUnit) setSpeedUnit(t.speedUnit)
+    setText(t.rawText)
+    if (!title.trim()) setTitle(t.name)
+  }
+
+  const saveAsTemplate = async () => {
+    const name = prompt('Template name', title.trim())?.trim()
+    if (!name) return
+    // Saving under an existing name replaces that template.
+    const existing = byName.find((t) => t.name === name)
+    if (existing && !confirm(`Replace the template \u201c${name}\u201d?`)) return
+    await saveTemplate({ id: existing?.id, name, sport, rawText: text.trim(), speedUnit })
   }
 
   const detect = () => {
@@ -248,6 +268,29 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
         hasHr={!!streams}
         onDetect={recording && canDetect(recording.rec, recording.streams) ? detect : undefined}
       />
+
+      <div className="form-row templates">
+        {byName.length > 0 && (
+          <select
+            aria-label="Template"
+            value=""
+            onChange={(e) => {
+              const t = byName.find((x) => x.id === e.target.value)
+              if (t) applyTemplate(t)
+            }}
+          >
+            <option value="">From template…</option>
+            {byName.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name} ({SPORT_LABEL[t.sport]})
+              </option>
+            ))}
+          </select>
+        )}
+        <button type="button" onClick={saveAsTemplate} disabled={!text.trim() || hasErrors}>
+          Save as template
+        </button>
+      </div>
 
       <ShorthandInput
         value={text}

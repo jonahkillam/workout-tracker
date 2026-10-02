@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Recording, WeekNote, Workout } from '../model/types'
+import type { Recording, Template, WeekNote, Workout } from '../model/types'
 import { SERVER_TABLES, type Doc, type Row } from './rows'
 
 const profile = { thresholdSpeed: 15, ftp: 250, lthr: 170, maxHr: 190, stairStepHeight: 0.2, stairFloorHeight: 3.25 }
@@ -47,6 +47,7 @@ const recording: Recording = {
 }
 
 const note: WeekNote = { weekStart: '2026-09-28', text: 'Taper', updatedAt: 1790000000000 }
+const template: Template = { id: 't1', name: 'Hill reps', sport: 'treadmill', rawText: '10x60/60 @ 12%', speedUnit: 'pace', updatedAt: 1790000000000 }
 const settings = { id: 'settings', ...profile, speedUnit: 'kmh' }
 
 /** What a row looks like read back from Postgres: JSON, with timestamptz written as `+00:00`. */
@@ -64,6 +65,7 @@ describe('server rows', () => {
     ['recordings', recording],
     ['weekNotes', note],
     ['settings', settings],
+    ['templates', template],
   ] as const)('round-trips a full %s object', (table, doc) => {
     const t = SERVER_TABLES[table]
     expect(t.fromRow(asPostgres(t.toRow(doc as unknown as Doc)))).toEqual(doc)
