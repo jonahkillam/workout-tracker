@@ -2,6 +2,7 @@
 // text: one `- <cue> <duration> <target>` line per step, and `Nx` blocks (set off by blank lines) for repeats.
 import { num, fmtDuration, fmtPace } from '../parser/format'
 import { mainSetSummary } from '../parser/summary'
+import { stepZone } from '../metrics/workout'
 import type { Block, Profile, Range, Sport, SpeedUnit, Step, Workout } from '../model/types'
 import { SPORT_LABEL } from '../model/types'
 
@@ -120,19 +121,26 @@ function cue(s: Step, sport: Sport, profile: Profile | undefined): string {
     .join(' ')
 }
 
-function stepLine(s: Step, sport: Sport, profile: Profile | undefined): string {
-  const parts = [cue(s, sport, profile), amount(s), target(s, sport, profile)].filter(Boolean)
+function stepLine(s: Step, sport: Sport, profile: Profile | undefined, rpe: number | undefined): string {
   // Without a duration or distance it can't be a step; it's left as a line of text.
-  return amount(s) ? `- ${parts.join(' ')}` : parts.join(' ')
+  if (!amount(s)) return [cue(s, sport, profile), target(s, sport, profile)].filter(Boolean).join(' ')
+  // intervals.icu draws nothing for a step without a target, so one without gets the zone this app gives it. As
+  // a heart-rate zone off the bike: intervals.icu has an LTHR for nearly everyone, but often no threshold pace.
+  const zone = stepZone(s, sport, profile ?? {}, rpe)
+  const t = target(s, sport, profile) ?? `Z${zone}${sport === 'ride' ? '' : ' HR'}`
+  return `- ${[cue(s, sport, profile), amount(s), t].filter(Boolean).join(' ')}`
 }
 
-/** The steps as intervals.icu workout text. Pauses are left out: they aren't part of a plan. */
-export function intervalsText(blocks: Block[], sport: Sport, profile?: Profile): string {
+/**
+ * The steps as intervals.icu workout text. Pauses are left out: they aren't part of a plan. `rpe` is the
+ * session RPE, which sets the zone of work steps without a target.
+ */
+export function intervalsText(blocks: Block[], sport: Sport, profile?: Profile, rpe?: number): string {
   const lines: string[] = []
   for (const seg of segments(blocks, false)) {
     const steps = seg.steps.filter((s) => s.kind !== 'pause')
     if (!steps.length) continue
-    const body = steps.map((s) => stepLine(s, sport, profile))
+    const body = steps.map((s) => stepLine(s, sport, profile, rpe))
     if (seg.count > 1) lines.push('', `${seg.count}x`, ...body, '')
     else lines.push(...body)
   }
@@ -141,10 +149,10 @@ export function intervalsText(blocks: Block[], sport: Sport, profile?: Profile):
 }
 
 export function intervalsEvent(
-  w: Pick<Workout, 'id' | 'date' | 'sport' | 'title' | 'blocks' | 'duration' | 'profile' | 'speedUnit'>,
+  w: Pick<Workout, 'id' | 'date' | 'sport' | 'title' | 'blocks' | 'duration' | 'profile' | 'speedUnit' | 'rpe'>,
   speedUnit: SpeedUnit,
 ): IntervalsEvent {
-  const description = intervalsText(w.blocks, w.sport, w.profile)
+  const description = intervalsText(w.blocks, w.sport, w.profile, w.rpe)
   return {
     category: 'WORKOUT',
     start_date_local: `${w.date}T00:00:00`,

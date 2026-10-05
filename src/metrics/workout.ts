@@ -137,7 +137,12 @@ export function stepStats(step: Step, sport: Sport, profile: Profile, workoutRpe
 }
 
 /** Intensity zone 1-5, from the most specific information available. */
-function stepZone(step: Step, sport: Sport, profile: Profile, workoutRpe?: number): number {
+export function stepZone(
+  step: Step,
+  sport: Sport,
+  profile: Pick<Profile, 'thresholdSpeed' | 'ftp' | 'lthr'>,
+  workoutRpe?: number,
+): number {
   const t = step.targets
   // The parser warns about zones outside 1-5; count them as the nearest zone.
   if (t.zone) return Math.min(5, Math.max(1, Math.round(mid(t.zone)!)))

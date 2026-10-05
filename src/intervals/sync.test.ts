@@ -58,7 +58,7 @@ describe('intervals.icu reconcile', () => {
     await reconcile(calendar, TODAY)
     await saveWorkout({ ...w, date: '2026-10-08', rawText: '40m', blocks: parseWorkout('40m').blocks })
     expect(await reconcile(calendar, TODAY)).toEqual({ created: 0, updated: 1, removed: 0 })
-    expect(calendar.events).toMatchObject([{ id: 1, start_date_local: '2026-10-08T00:00:00', description: '- 40m' }])
+    expect(calendar.events).toMatchObject([{ id: 1, start_date_local: '2026-10-08T00:00:00', description: '- 40m Z2 HR' }])
 
     await saveWorkout({ ...w, date: '2026-09-29' })
     await reconcile(calendar, TODAY)
