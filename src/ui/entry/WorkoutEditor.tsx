@@ -12,7 +12,7 @@ import { linkOffset, stepAverage, stepWindows } from '../../recordings/align'
 import { detectText } from '../../recordings/autolog'
 import { canDetect } from '../../recordings/intervals'
 import { newLink } from '../../recordings/match'
-import { serializeBlocks } from '../../parser/serialize'
+import { serializeBlocks, textInSpeedUnit } from '../../parser/serialize'
 import { TimelineBar } from '../charts/TimelineBar'
 import { CommitInput } from '../common/CommitInput'
 import { Modal } from '../common/Modal'
@@ -71,8 +71,11 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
   const [rpe, setRpe] = useState(draft.rpe !== undefined ? String(draft.rpe) : '')
   const [totalText, setTotalText] = useState(draft.duration ? fmtDuration(draft.duration) : '')
   const [notes, setNotes] = useState<Note[]>(draft.notes?.length ? draft.notes : [{ kind: 'general', text: '' }])
-  const [text, setText] = useState(draft.rawText ?? '')
-  const [speedUnit, setSpeedUnit] = useState<SpeedUnit>(draft.speedUnit ?? settings.speedUnit)
+  // Opens in the current unit, whichever the workout was typed in.
+  const [speedUnit, setSpeedUnit] = useState<SpeedUnit>(settings.speedUnit)
+  const [text, setText] = useState(() =>
+    textInSpeedUnit(draft.rawText ?? '', draft.speedUnit ?? settings.speedUnit, settings.speedUnit),
+  )
   // Thresholds are copied from settings when the workout is first logged, then kept.
   const [profile, setProfile] = useState<Profile>(draft.profile ?? profileOf(settings))
   const [paceText, setPaceText] = useState(profile.thresholdSpeed ? fmtPace(profile.thresholdSpeed) : '')
@@ -131,8 +134,7 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
   const applyTemplate = (t: Template) => {
     if (text.trim() && text.trim() !== t.rawText && !confirm('Replace this workout\u2019s steps with the template?')) return
     setSport(t.sport)
-    if (t.speedUnit) setSpeedUnit(t.speedUnit)
-    setText(t.rawText)
+    setText(textInSpeedUnit(t.rawText, t.speedUnit ?? speedUnit, speedUnit))
     if (!title.trim()) setTitle(t.name)
   }
 
@@ -148,8 +150,7 @@ export function WorkoutEditor({ draft, settings, onClose }: Props) {
   const detect = () => {
     const detected = recording && detectText(recording.rec, recording.streams, profile)
     if (!detected) return
-    if (recording.rec.sport === 'run') setSpeedUnit('pace')
-    setText(detected.rawText)
+    setText(textInSpeedUnit(detected.rawText, 'pace', speedUnit))
   }
 
   // One save at a time, so a double-click or a repeating ⌘↵ can't add the workout twice.

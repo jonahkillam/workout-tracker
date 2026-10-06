@@ -3,7 +3,7 @@ import type { Block, Step } from '../model/types'
 import { expand, withSpeedUnit } from '../model/tree'
 import { fmtPace } from './format'
 import { parseWorkout } from './parser'
-import { serializeBlocks } from './serialize'
+import { serializeBlocks, textInSpeedUnit } from './serialize'
 
 const step = (s: Partial<Step>): Step => ({ type: 'step', kind: 'steady', targets: {}, ...s })
 
@@ -367,5 +367,18 @@ describe('fmtPace', () => {
     expect(fmtPace(0)).toBe('–')
     expect(fmtPace(Infinity)).toBe('–')
     expect(fmtPace(12)).toBe('5:00')
+  })
+})
+
+describe('textInSpeedUnit', () => {
+  it('rewrites speeds in the other unit with the same values', () => {
+    expect(textInSpeedUnit('10x40/20 @ 15%, 12//7.5', 'kmh', 'pace')).toBe('10x40/20 @ 15%, 5:00/km//8:00/km')
+    expect(textInSpeedUnit('5x1km/90s @ 4:00/km', 'pace', 'kmh')).toBe('5x1km/90s @ 15km/h')
+  })
+
+  it('leaves text that needs no rewrite, or does not parse', () => {
+    expect(textInSpeedUnit('5x1km/90s @ 4:00', 'pace', 'pace')).toBe('5x1km/90s @ 4:00')
+    expect(textInSpeedUnit('45m @ Z2', 'kmh', 'pace')).toBe('45m @ Z2')
+    expect(textInSpeedUnit('10x40/20 @ 12 ((', 'kmh', 'pace')).toBe('10x40/20 @ 12 ((')
   })
 })

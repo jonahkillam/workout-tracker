@@ -157,7 +157,7 @@ export function intervalsEvent(
     category: 'WORKOUT',
     start_date_local: `${w.date}T00:00:00`,
     type: TYPE[w.sport],
-    name: w.title || mainSetSummary(w.blocks, w.speedUnit ?? speedUnit) || SPORT_LABEL[w.sport],
+    name: w.title || mainSetSummary(w.blocks, speedUnit) || SPORT_LABEL[w.sport],
     description,
     external_id: externalId(w.id),
     ...(w.sport === 'treadmill' ? { indoor: true } : {}),

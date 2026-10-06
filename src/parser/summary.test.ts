@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseWorkout } from './parser'
 import { mainSetSummary } from './summary'
 
-const summary = (src: string, unit?: 'kmh' | 'pace') => mainSetSummary(parseWorkout(src, { speedUnit: unit }).blocks, unit)
+const summary = (src: string, unit: 'kmh' | 'pace' = 'kmh') => mainSetSummary(parseWorkout(src, { speedUnit: unit }).blocks, unit)
 
 describe('mainSetSummary', () => {
   it('reduces a repeat to its shape and one key target', () => {
@@ -29,9 +29,13 @@ describe('mainSetSummary', () => {
     expect(summary('7m20s @ Z3')).toBe('0:07:20 @ Z3')
   })
 
-  it('keeps paces typed as paces and rounds km/h', () => {
-    expect(summary('5x1km/90s @ 4:05/km, 6x200mtr/200mtr @ 3:30/km')).toBe('5×1km/90s @ 4:05/km + 6×200mtr/200mtr @ 3:30/km')
+  it('shows speeds in the given unit, however they were typed, and rounds km/h', () => {
+    expect(summary('5x1km/90s @ 4:05/km, 6x200mtr/200mtr @ 3:30/km', 'pace')).toBe(
+      '5×1km/90s @ 4:05/km + 6×200mtr/200mtr @ 3:30/km',
+    )
+    expect(summary('4x1km/90s @ 5:00/km')).toBe('4×1km/90s @ 12km/h')
     expect(summary('20m @ 10.25-10.75km/h')).toBe('20m @ 10.3-10.8km/h')
+    expect(summary('20m @ 12km/h', 'pace')).toBe('20m @ 5:00/km')
   })
 
   it('treats an easy step after a nested repeat as the set recovery', () => {

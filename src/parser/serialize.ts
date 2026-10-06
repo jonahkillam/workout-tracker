@@ -1,6 +1,7 @@
-import type { Block, Range, Repeat, Step, StepKind, Targets } from '../model/types'
+import { expand, withSpeedUnit } from '../model/tree'
+import type { Block, Range, Repeat, SpeedUnit, Step, StepKind, Targets } from '../model/types'
 import { amountText, exact, fmtDuration, fmtRange, fmtSpeed, num } from './format'
-import { APPLY_TO_ALL, type TargetKey } from './parser'
+import { APPLY_TO_ALL, parseWorkout, type TargetKey } from './parser'
 
 export const TARGET_ORDER: TargetKey[] = ['incline', 'speed', 'power', 'hr', 'zone', 'rpe', 'stepRate', 'level']
 
@@ -163,4 +164,17 @@ function serializeList(blocks: Block[], inRepeat: boolean): string {
 
 export function serializeBlocks(blocks: Block[]): string {
   return serializeList(blocks, false)
+}
+
+/**
+ * Shorthand read in `from`, rewritten so its speeds are written in `to` with the same values.
+ * Text that doesn't parse, or already writes every speed in `to`, comes back unchanged.
+ */
+export function textInSpeedUnit(text: string, from: SpeedUnit, to: SpeedUnit): string {
+  if (!text.trim()) return text
+  const r = parseWorkout(text, { speedUnit: from })
+  if (r.diagnostics.some((d) => d.severity === 'error')) return text
+  const pace = to === 'pace'
+  if (!expand(r.blocks).some((s) => s.targets.speed && !!s.targets.asPace !== pace)) return text
+  return serializeBlocks(withSpeedUnit(r.blocks, to))
 }

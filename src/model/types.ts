@@ -286,5 +286,5 @@ export const DEFAULT_SETTINGS: Settings = {
   // 16 steps per 3.25 m floor.
   stairStepHeight: 3.25 / 16,
   stairFloorHeight: 3.25,
-  speedUnit: 'kmh',
+  speedUnit: 'pace',
 }

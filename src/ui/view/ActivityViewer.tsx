@@ -3,11 +3,11 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { db } from '../../db/db'
 import { fmtLongDate, today } from '../../metrics/dates'
 import { stepStats, workoutTotals } from '../../metrics/workout'
-import { occurrences } from '../../model/tree'
+import { occurrences, withSpeedUnit } from '../../model/tree'
 import type { Block, Settings, Step, Workout } from '../../model/types'
 import { isPlanned, KIND_LABEL, SPORT_LABEL } from '../../model/types'
 import { amountText, fmtClock, fmtSpeedIn } from '../../parser/format'
-import { fmtTargets } from '../../parser/serialize'
+import { fmtTargets, textInSpeedUnit } from '../../parser/serialize'
 import { mainSetSummary } from '../../parser/summary'
 import { linkOffset, stepAverage, stepSegments, stepWindows } from '../../recordings/align'
 import { effortFor, type EffortKind } from '../../recordings/derived'
@@ -30,7 +30,9 @@ interface Props {
 /** Read-only view of a logged workout: plan, recording and a zoomable chart. Editing is a separate dialog. */
 export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props) {
   const profile = w.profile ?? settings
-  const speedUnit = w.speedUnit ?? settings.speedUnit
+  const speedUnit = settings.speedUnit
+  // Speeds show in the current unit, whichever they were typed in.
+  const shown = useMemo(() => withSpeedUnit(w.blocks, speedUnit), [w.blocks, speedUnit])
   const [view, setView] = useState<[number, number]>()
 
   const recording = useLiveQuery(() => (w.recording ? db.recordings.get(w.recording.id) : undefined), [w.recording?.id])
@@ -41,17 +43,17 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
   }, [w.recording?.id])
   const offset = linkOffset(w.recording)
 
-  const segments = useMemo(() => stepSegments(w.blocks, w.sport, profile, w.rpe), [w.blocks, w.sport, profile, w.rpe])
+  const segments = useMemo(() => stepSegments(shown, w.sport, profile, w.rpe), [shown, w.sport, profile, w.rpe])
   const windows = useMemo(
-    () => stepWindows(w.blocks, w.sport, profile, w.rpe, offset),
-    [w.blocks, w.sport, profile, w.rpe, offset],
+    () => stepWindows(shown, w.sport, profile, w.rpe, offset),
+    [shown, w.sport, profile, w.rpe, offset],
   )
   const hrByStep = useMemo(() => (streams?.hr ? stepAverage(windows, streams.t, streams.hr) : undefined), [streams, windows])
 
   // GAP, pace or power, whichever suits the sport and the terrain.
   const effort = useMemo(
-    () => (streams ? effortFor(streams, w.sport, w.blocks, profile, w.rpe, offset) : undefined),
-    [streams, w.sport, w.blocks, profile, w.rpe, offset],
+    () => (streams ? effortFor(streams, w.sport, shown, profile, w.rpe, offset) : undefined),
+    [streams, w.sport, shown, profile, w.rpe, offset],
   )
   const effortByStep = useMemo(
     () => (effort && streams ? stepAverage(windows, streams.t, effort.values) : undefined),
@@ -59,7 +61,11 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
   )
   const fmtEffort = (v: number) => (effort?.kind === 'power' ? `${Math.round(v)} W` : fmtSpeedIn(v, speedUnit))
   const totals = workoutTotals(w, profile)
-  const title = w.title || mainSetSummary(w.blocks, speedUnit) || 'Workout'
+  const rawText = useMemo(
+    () => textInSpeedUnit(w.rawText, w.speedUnit ?? speedUnit, speedUnit),
+    [w.rawText, w.speedUnit, speedUnit],
+  )
+  const title = w.title || mainSetSummary(shown, speedUnit) || 'Workout'
 
   return (
     <Modal
@@ -86,7 +92,7 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
         <RecordingSummary recording={recording} note={offset !== 0 ? `plan starts at ${fmtClock(offset)}` : undefined} />
       )}
 
-      {w.rawText && <pre className="shorthand-view">{w.rawText}</pre>}
+      {w.rawText && <pre className="shorthand-view">{rawText}</pre>}
       <StatsRow totals={totals} sport={w.sport} speedUnit={speedUnit} />
 
       {segments.length > 0 || streams ? (
@@ -125,7 +131,7 @@ export function ActivityViewer({ workout: w, settings, onEdit, onClose }: Props)
       )}
 
       <StepList
-        blocks={w.blocks}
+        blocks={shown}
         hr={hrByStep}
         effort={effort && effortByStep && { label: EFFORT_LABEL[effort.kind], byStep: effortByStep, format: fmtEffort }}
         zoneOf={(s) => stepStats(s, w.sport, profile, w.rpe).zone}

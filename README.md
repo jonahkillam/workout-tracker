@@ -52,7 +52,7 @@ Data from before accounts stays in the browser, separate from the account. Setti
 
 When written once, incline and machine level apply to work and rest. Intensity targets (speed, power, HR, zone, RPE) apply to work only.
 
-**Speeds.** Each entry has a speed unit, km/h or min/km. New entries default to the Settings preference, and the entry sheet has a toggle. A speed without a unit (`8.5`, `8.3-8.8//6.5-7`) is read in that unit and flagged with a note. `4:30` is always a pace. Switching the toggle rewrites the speeds in place, so their values don't change.
+**Speeds.** Speeds are shown in the Settings unit, min/km (the default) or km/h, everywhere, including workouts typed in the other unit; opening one in the entry sheet rewrites its speeds in that unit. The entry sheet has a toggle. A speed without a unit (`8.5`, `8.3-8.8//6.5-7`) is read in that unit and flagged with a note. `4:30` is always a pace. Switching the toggle rewrites the speeds in place, so their values don't change.
 
 **Thresholds.** Threshold pace (min/km), FTP, threshold HR and max HR are set in Settings. None has a default: until threshold pace is set, speed-based zones fall back to step type and RPE. Each workout stores a copy of the values when it's logged (`Workout.profile`), so changing Settings later doesn't alter past zones. Workouts with no value recorded take the first one you set. A workout's own values can be edited from its form.
 

@@ -10,7 +10,7 @@ interface Props {
   blocks: Block[]
   sport: Sport
   profile: Profile
-  speedUnit?: SpeedUnit
+  speedUnit: SpeedUnit
   rpe?: number
   height?: number
   /** Compact mode for the week table: no incline track, caption or tooltips. */
@@ -35,7 +35,7 @@ export function TimelineBar({
   blocks,
   sport,
   profile,
-  speedUnit = 'kmh',
+  speedUnit,
   rpe,
   height = 48,
   mini = false,

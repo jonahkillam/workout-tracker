@@ -123,7 +123,7 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
       const rec = w.recording ? byId.get(w.recording.id) : undefined
       const t = { ...sessionTotals(w, rec, settings), hr: rec?.avgHr }
       const recStreams = w.recording && streams.get(w.recording.id)
-      const mainSet = mainSetSummary(w.blocks, w.speedUnit ?? settings.speedUnit)
+      const mainSet = mainSetSummary(w.blocks, settings.speedUnit)
       const planned = isPlanned(w)
       // Not done by the end of its day: missed.
       const status = planned && (date < now ? 'Missed' : 'Planned')
@@ -163,6 +163,7 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
               blocks={w.blocks}
               sport={w.sport}
               profile={profile}
+              speedUnit={settings.speedUnit}
               rpe={w.rpe}
               height={30}
               mini
@@ -210,6 +211,7 @@ export function WeekTable({ start, workouts, recordings, streams, summary, acwr,
                 blocks={[]}
                 sport={r.sport}
                 profile={r.profile ?? settings}
+                speedUnit={settings.speedUnit}
                 height={30}
                 mini
                 recording={{ streams: recStreams, offset: 0 }}

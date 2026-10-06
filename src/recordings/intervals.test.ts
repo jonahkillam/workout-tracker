@@ -125,7 +125,7 @@ describe('detectBlocks', () => {
     const a = activity('ride', [[600, 150], ...reps(3, [600, 250], [300, 120]), [600, 150]])
     const out = text(a, { ...NO_THRESHOLDS, ftp: 250 })!
     expect(out).toBe('10m wu @ 150w, 3x10m/5m -r @ 250w, 10m cd @ 150w')
-    expect(mainSetSummary(parseWorkout(out).blocks)).toMatch(/^3×/)
+    expect(mainSetSummary(parseWorkout(out).blocks, 'kmh')).toMatch(/^3×/)
   })
 
   it('logs a ride without FTP from its two power levels', () => {

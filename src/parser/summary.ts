@@ -24,8 +24,8 @@ function pair(work: Step, rest: Step): string {
 function keyTarget(s: Step, speedUnit: SpeedUnit): string {
   const t = s.targets
   if (t.incline && t.incline.max > 0) return fmtRange(t.incline, '%')
-  // Keep a pace typed as a pace, whatever the workout's default unit.
-  if (t.speed && (t.asPace || speedUnit === 'pace')) return fmtSpeed(t.speed, true)
+  // Shown in the current unit, however it was typed.
+  if (t.speed && speedUnit === 'pace') return fmtSpeed(t.speed, true)
   if (t.speed) return `${num(t.speed.min, 1)}${t.speed.max !== t.speed.min ? `-${num(t.speed.max, 1)}` : ''}km/h`
   if (t.power) return fmtRange(t.power, 'W')
   if (t.zone) return fmtRange(t.zone, '', 'Z')
@@ -72,7 +72,7 @@ function repeatSummary(r: Extract<Block, { type: 'repeat' }>, speedUnit: SpeedUn
  * when there are none. Warm-ups, cool-downs, set rests and secondary targets
  * are left out.
  */
-export function mainSetSummary(blocks: Block[], speedUnit: SpeedUnit = 'kmh'): string {
+export function mainSetSummary(blocks: Block[], speedUnit: SpeedUnit): string {
   const main = blocks.filter((b) => b.type === 'repeat' || (b.kind !== 'wu' && b.kind !== 'cd' && b.kind !== 'pause'))
   const repeats = main.filter((b) => b.type === 'repeat')
   if (repeats.length) return repeats.map((r) => repeatSummary(r, speedUnit)).join(' + ')
